@@ -241,6 +241,46 @@ Transcript files land in `~/.openclaw/voice-calls/transcripts/<callId>.md` with 
 
 Gateway RPCs are also available: `voicecall-tristan.initiate`, `.status`, `.transcript`, `.end`, `.speak`, `.continue`.
 
+## Mid-call scheduling: giving the AI your availability
+
+Two opt-in ways for the voice AI to answer "does Wednesday at 2 work?" during a call. Enable one (or both — the AI prefers `check_calendar` for pure availability when both exist).
+
+### Option A: `ask_assistant` — bridge to your OpenClaw agent (recommended)
+
+If your OpenClaw agent already has calendar access (a calendar skill, MCP server, or CLI tool), the voice AI can simply ask it — and the same bridge answers *any* mid-call question your agent can handle: preferences, addresses, looking something up.
+
+```jsonc
+// inside the plugin config
+"assistantBridge": {
+  "enabled": true,
+  "timeoutMs": 45000        // optional; how long to wait for the agent
+}
+```
+
+How it behaves on a call: the voice AI says "one moment, let me check", relays one specific question to your agent as a scoped subagent turn, and speaks the answer. Expect a 10–40 second pause — normal "let me look that up" territory on a phone call. Each question runs in a throwaway session that is deleted afterward.
+
+Security model: the voice AI never gets tool access. Your agent receives the question wrapped in call context — *"live outbound call to +1555…, goal: book a table"* — with instructions to answer in 1–3 speakable sentences and refuse anything private beyond the call's purpose. Your agent's judgment is the boundary.
+
+### Option B: `check_calendar` — direct iCal feed (no agent tooling needed)
+
+Zero-dependency free/busy from your calendar's secret iCal URL:
+
+- **Google Calendar**: Settings → *Settings for my calendars* → your calendar → *Integrate calendar* → **Secret address in iCal format**
+- **iCloud**: Calendar app → share calendar → *Public Calendar* (or use an app-specific read-only share)
+- **Outlook**: Settings → *Shared calendars* → Publish → ICS link
+
+```jsonc
+"calendar": {
+  "enabled": true,
+  "icsUrl": "https://calendar.google.com/calendar/ical/…/private-…/basic.ics",
+  "dayStartHour": 8,        // availability window, local hours
+  "dayEndHour": 21,
+  "cacheTtlMs": 300000      // feed cache (5 min)
+}
+```
+
+The plugin fetches the feed, expands recurring events, and answers with per-day busy windows only — event titles, locations, and attendees never reach the model. Treat the secret URL like a password (anyone with it can read your events); it lives in your OpenClaw config alongside your other credentials, and you can revoke/regenerate it from your calendar provider at any time.
+
 ## Key configuration reference
 
 | Key | Default | Notes |
