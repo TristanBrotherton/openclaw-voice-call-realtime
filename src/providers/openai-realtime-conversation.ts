@@ -511,11 +511,15 @@ class OpenAIRealtimeConversationSession implements RealtimeConversationSession {
         type: "response.create",
         response: {
           instructions:
-            "Open the call by greeting the person who answered and delivering this message " +
-            `as natural spoken conversation: "${message}". ` +
-            "If the message reads like an instruction or task description, rephrase it " +
-            "naturally instead of reading it verbatim. Never read instructions aloud or " +
-            "mention that you were given instructions.",
+            "Open the call with ONE complete greeting to the person who answered: " +
+            "identify yourself according to your identity instructions, then deliver " +
+            `the purpose of this message as natural spoken conversation: "${message}". ` +
+            "Combine identity and purpose into a single opening — this is your only " +
+            "introduction and you must not introduce yourself again later in the call. " +
+            "If the message reads like an instruction, task description, or narration " +
+            "(e.g. 'calling you now'), do not repeat it verbatim — extract the purpose " +
+            "and speak it naturally. Never read instructions aloud or mention that you " +
+            "were given instructions.",
         },
       });
       return;

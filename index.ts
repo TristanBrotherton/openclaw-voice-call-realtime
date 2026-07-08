@@ -116,7 +116,14 @@ const VoiceCallToolSchema = Type.Union([
   Type.Object({
     action: Type.Literal("initiate_call"),
     to: Type.Optional(Type.String({ description: "Call target" })),
-    message: Type.String({ description: "Intro message" }),
+    message: Type.String({
+      description:
+        "The opening line spoken to whoever answers — the first thing said on " +
+        "the call. Write it as direct speech that identifies the caller and " +
+        "states the purpose, e.g. \"Hi, this is Sam, Alex's assistant — Alex " +
+        "asked me to call about tomorrow's reservation.\" Never meta-narration " +
+        "like 'calling you now' or 'placing the call'.",
+    }),
     mode: Type.Optional(Type.Union([Type.Literal("notify"), Type.Literal("conversation")])),
     talking_points: Type.Optional(
       Type.Array(Type.String(), { description: "Talking points to cover during the call" }),
