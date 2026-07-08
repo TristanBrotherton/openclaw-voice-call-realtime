@@ -275,7 +275,8 @@
       },
       "inboundSecurity": {
         "default": {
-          "trustStirA": true
+          "trustStirA": true,
+          "rejectUnverified": false
         },
         "type": "object",
         "properties": {
@@ -286,6 +287,10 @@
           "passphrase": {
             "type": "string",
             "minLength": 4
+          },
+          "rejectUnverified": {
+            "default": false,
+            "type": "boolean"
           }
         },
         "additionalProperties": false

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.7.17
+
+### Changes
+
+- `inboundSecurity.rejectUnverified`: fail-closed inbound. Calls that do not
+  pass the identity checks (allowlist + STIR attestation A when required)
+  are rejected with TwiML <Reject> before the call is answered — no realtime
+  session is created and no per-minute charges accrue.
+
 ## 2026.7.16
 
 ### Changes

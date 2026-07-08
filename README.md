@@ -318,6 +318,7 @@ Caller ID is trivially spoofable, so number matching alone is weak authenticatio
 1. **Allowlist** (`allowFrom`) — anyone else is rejected before the call connects.
 2. **SHAKEN/STIR attestation** (`trustStirA`, default on) — inbound trust tiers (owner → first-party, `trustedNumbers` → trusted-contact) are granted **only** when Twilio reports `TN-Validation-Passed-A`, meaning the originating carrier cryptographically signed the caller ID. A spoofed call won't carry attestation A, so it lands as *unverified*: the AI stays helpful on generalities but shares nothing personal and performs no actions.
 3. **Spoken passphrase** (optional) — an unverified caller claiming to be the owner is asked for the access phrase, which the AI checks with the `verify_passphrase` tool (normalized comparison, two attempts max). The phrase lives only in your config — it is never placed in the model's prompt, so it can't be tricked out of the AI. Success upgrades the caller to first-party for that call; it also rescues legitimate calls that lack attestation (some carriers/international routes).
+4. **Fail-closed mode** (`rejectUnverified: true`) — calls that don't pass the identity checks are rejected with TwiML `<Reject>` **before the call is answered**: no AI session is created, no OpenAI or Twilio per-minute charges accrue. The trade-off: the spoken-passphrase fallback can't run (the AI never picks up), so legitimate calls without attestation are rejected too.
 
 The same trust tier drives everything downstream: the assistant-bridge action policy, calendar detail level, and what the AI will discuss.
 
@@ -385,6 +386,7 @@ Default is `server_vad` (responds after `silenceDurationMs` of silence). `semant
 | `inboundPolicy` | `disabled` | `allowlist` + `allowFrom: ["+1555…"]` to accept inbound |
 | `inboundSecurity.trustStirA` | `true` | Require SHAKEN/STIR attestation A before trusting inbound caller ID |
 | `inboundSecurity.passphrase` | — | Spoken access phrase (tool-checked, never in the prompt) to verify the owner |
+| `inboundSecurity.rejectUnverified` | `false` | Fail closed: unverified inbound is rejected pre-answer — zero AI/telephony cost |
 | `summaryModel` | `gpt-4o-mini` | Chat model for end-of-call summaries |
 | `logTranscripts` | `false` | Log call content to gateway logs (off by default — calls contain personal data) |
 | `assistantBridge.enabled` | `false` | Give the voice AI an `ask_assistant` tool that relays questions to your OpenClaw agent mid-call |

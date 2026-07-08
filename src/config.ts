@@ -428,9 +428,17 @@ export const VoiceCallConfigSchema = z
       .object({
         trustStirA: z.boolean().default(true),
         passphrase: z.string().min(4).optional(),
+        /**
+         * Fail closed: inbound calls that do not pass the identity checks
+         * (allowlisted number AND, when trustStirA is on, carrier attestation
+         * A) are rejected before the call is answered — no AI session is
+         * created and no per-minute charges accrue. Note this disables the
+         * spoken-passphrase fallback, since the AI never picks up.
+         */
+        rejectUnverified: z.boolean().default(false),
       })
       .strict()
-      .default({ trustStirA: true }),
+      .default({ trustStirA: true, rejectUnverified: false }),
 
     /** Outbound call configuration */
     outbound: OutboundConfigSchema,

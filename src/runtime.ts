@@ -9,6 +9,8 @@ import { TelnyxProvider } from "./providers/telnyx.js";
 import { TwilioProvider } from "./providers/twilio.js";
 import type { TelephonyTtsRuntime } from "./telephony-tts.js";
 import { createTelephonyTtsProvider } from "./telephony-tts.js";
+import { hasStirAttestationA } from "./assistant-bridge.js";
+import { isAllowlistedCaller, normalizePhoneNumber } from "./allowlist.js";
 import { startTunnel, type TunnelResult } from "./tunnel.js";
 import { VoiceCallWebhookServer } from "./webhook.js";
 import { cleanupTailscaleExposure, setupTailscaleExposure } from "./webhook/tailscale.js";
@@ -80,6 +82,38 @@ function isLoopbackBind(bind: string | undefined): boolean {
   return bind === "127.0.0.1" || bind === "::1" || bind === "localhost";
 }
 
+/**
+ * Pre-answer inbound gate: decides whether an inbound call may be answered
+ * at all. Failing calls get TwiML <Reject> — no AI session, no charges.
+ * Returns undefined when the manager-level policy alone should decide
+ * (rejectUnverified off), keeping the passphrase fallback possible.
+ */
+export function buildInboundAcceptor(
+  config: VoiceCallConfig,
+): ((params: { from?: string; stirVerstat?: string }) => boolean) | undefined {
+  return ({ from, stirVerstat }) => {
+    // Policy gate (mirror of the manager-level inbound policy).
+    if (config.inboundPolicy === "disabled") {
+      return false;
+    }
+    if (config.inboundPolicy !== "open") {
+      const normalized = normalizePhoneNumber(from);
+      if (!normalized || !isAllowlistedCaller(normalized, config.allowFrom)) {
+        return false;
+      }
+    }
+    // Identity gate: with rejectUnverified, an allowlisted number must also
+    // carry carrier attestation (when trustStirA is on) or it never rings in.
+    if (config.inboundSecurity?.rejectUnverified) {
+      const needStir = config.inboundSecurity.trustStirA ?? true;
+      if (needStir && !hasStirAttestationA(stirVerstat)) {
+        return false;
+      }
+    }
+    return true;
+  };
+}
+
 function resolveProvider(config: VoiceCallConfig): VoiceCallProvider {
   const allowNgrokFreeTierLoopbackBypass =
     config.tunnel?.provider === "ngrok" &&
@@ -110,6 +144,7 @@ function resolveProvider(config: VoiceCallConfig): VoiceCallProvider {
           skipVerification: config.skipSignatureVerification,
           streamPath: config.streaming?.enabled ? config.streaming.streamPath : undefined,
           amdEnabled: config.amd?.enabled ?? false,
+          inboundAccept: buildInboundAcceptor(config),
           webhookSecurity: config.webhookSecurity,
         },
       );

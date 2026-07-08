@@ -104,3 +104,51 @@ describe("createOwnerMessenger", () => {
     expect(runs[0]).toContain("Do NOT answer the question");
   });
 });
+
+describe("pre-answer inbound gate", () => {
+  it("rejects non-allowlisted, unattested (when strict), and disabled-policy calls", async () => {
+    const { buildInboundAcceptor } = await import("./runtime.js");
+    const { VoiceCallConfigSchema } = await import("./config.js");
+    const strict = buildInboundAcceptor(
+      VoiceCallConfigSchema.parse({
+        enabled: true, provider: "mock",
+        inboundPolicy: "allowlist", allowFrom: ["+15550001111"],
+        inboundSecurity: { trustStirA: true, rejectUnverified: true },
+      }),
+    )!;
+    // unknown number
+    expect(strict({ from: "+15559998888", stirVerstat: "TN-Validation-Passed-A" })).toBe(false);
+    // allowlisted but spoofable (no attestation)
+    expect(strict({ from: "+15550001111" })).toBe(false);
+    expect(strict({ from: "+15550001111", stirVerstat: "TN-Validation-Passed-B" })).toBe(false);
+    // allowlisted + attested
+    expect(strict({ from: "+15550001111", stirVerstat: "TN-Validation-Passed-A" })).toBe(true);
+
+    const lenient = buildInboundAcceptor(
+      VoiceCallConfigSchema.parse({
+        enabled: true, provider: "mock",
+        inboundPolicy: "allowlist", allowFrom: ["+15550001111"],
+        inboundSecurity: { trustStirA: true, rejectUnverified: false },
+      }),
+    )!;
+    // without rejectUnverified, unattested allowlisted calls still ring in
+    // (they get the AI in unverified mode with the passphrase fallback)
+    expect(lenient({ from: "+15550001111" })).toBe(true);
+    expect(lenient({ from: "+15559998888" })).toBe(false);
+
+    const disabled = buildInboundAcceptor(
+      VoiceCallConfigSchema.parse({ enabled: true, provider: "mock", inboundPolicy: "disabled" }),
+    )!;
+    expect(disabled({ from: "+15550001111", stirVerstat: "TN-Validation-Passed-A" })).toBe(false);
+  });
+
+  it("twiml policy returns reject for gated inbound", async () => {
+    const { decideTwimlResponse } = await import("./providers/twilio/twiml-policy.js");
+    const decision = decideTwimlResponse({
+      callStatus: "ringing", direction: "inbound", isStatusCallback: false,
+      callSid: "CA123", hasStoredTwiml: false, isNotifyCall: false,
+      hasActiveStreams: false, canStream: true, acceptInbound: false,
+    });
+    expect(decision.kind).toBe("reject");
+  });
+});

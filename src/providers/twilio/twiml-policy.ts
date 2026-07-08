@@ -1,6 +1,6 @@
 import type { WebhookContext } from "../../types.js";
 
-export type TwimlResponseKind = "empty" | "pause" | "queue" | "stored" | "stream";
+export type TwimlResponseKind = "empty" | "pause" | "queue" | "stored" | "stream" | "reject";
 
 export type TwimlRequestView = {
   callStatus: string | null;
@@ -8,6 +8,8 @@ export type TwimlRequestView = {
   isStatusCallback: boolean;
   callSid?: string;
   callIdFromQuery?: string;
+  from?: string;
+  stirVerstat?: string;
 };
 
 export type TwimlPolicyInput = TwimlRequestView & {
@@ -15,11 +17,13 @@ export type TwimlPolicyInput = TwimlRequestView & {
   isNotifyCall: boolean;
   hasActiveStreams: boolean;
   canStream: boolean;
+  /** When false, inbound calls are rejected pre-answer (no stream, no AI). */
+  acceptInbound?: boolean;
 };
 
 export type TwimlDecision =
   | {
-      kind: "empty" | "pause" | "queue";
+      kind: "empty" | "pause" | "queue" | "reject";
       consumeStoredTwimlCallId?: string;
       activateStreamCallSid?: string;
     }
@@ -52,6 +56,8 @@ export function readTwimlRequestView(ctx: WebhookContext): TwimlRequestView {
     isStatusCallback: type === "status" || type === "amd",
     callSid: params.get("CallSid") || undefined,
     callIdFromQuery,
+    from: params.get("From") || undefined,
+    stirVerstat: params.get("StirVerstat") || undefined,
   };
 }
 
@@ -74,6 +80,9 @@ export function decideTwimlResponse(input: TwimlPolicyInput): TwimlDecision {
   }
 
   if (input.direction === "inbound") {
+    if (input.acceptInbound === false) {
+      return { kind: "reject" };
+    }
     if (input.hasActiveStreams) {
       return { kind: "queue" };
     }

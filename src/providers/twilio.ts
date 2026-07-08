@@ -70,6 +70,11 @@ export interface TwilioProviderOptions {
   streamPath?: string;
   /** Enable Twilio async answering-machine detection on outbound calls */
   amdEnabled?: boolean;
+  /**
+   * Pre-answer inbound gate. Returning false rejects the call with TwiML
+   * <Reject> — never answered, no media stream, no AI session, no charges.
+   */
+  inboundAccept?: (params: { from?: string; stirVerstat?: string }) => boolean;
   /** Skip webhook signature verification (development only) */
   skipVerification?: boolean;
   /** Webhook security options (forwarded headers/allowlist) */
@@ -378,6 +383,11 @@ export class TwilioProvider implements VoiceCallProvider {
   <Pause length="30"/>
 </Response>`;
 
+  private static readonly REJECT_TWIML = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Reject reason="rejected"/>
+</Response>`;
+
   private static readonly QUEUE_TWIML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">Please hold while we connect you.</Say>
@@ -403,7 +413,16 @@ export class TwilioProvider implements VoiceCallProvider {
       isNotifyCall: view.callIdFromQuery ? this.notifyCalls.has(view.callIdFromQuery) : false,
       hasActiveStreams: this.activeStreamCalls.size > 0,
       canStream: Boolean(view.callSid && this.getStreamUrl()),
+      acceptInbound: this.options.inboundAccept
+        ? this.options.inboundAccept({ from: view.from, stirVerstat: view.stirVerstat })
+        : undefined,
     });
+
+    if (decision.kind === "reject") {
+      console.log(
+        `[voice-call] Rejecting inbound call pre-answer (from: ${view.from ?? "unknown"}, stir: ${view.stirVerstat ?? "none"})`,
+      );
+    }
 
     if (decision.consumeStoredTwimlCallId) {
       this.deleteStoredTwiml(decision.consumeStoredTwimlCallId);
@@ -415,6 +434,8 @@ export class TwilioProvider implements VoiceCallProvider {
     switch (decision.kind) {
       case "stored":
         return storedTwiml ?? TwilioProvider.EMPTY_TWIML;
+      case "reject":
+        return TwilioProvider.REJECT_TWIML;
       case "queue":
         return TwilioProvider.QUEUE_TWIML;
       case "pause":
