@@ -290,6 +290,14 @@ npm test          # vitest, 118 tests
 
 Layout: `src/manager/` call state machine · `src/providers/` telephony + realtime providers · `src/media-stream.ts` Twilio↔OpenAI audio bridge · `src/webhook.ts` HTTP server + in-call tool handlers · `src/transcript.ts` finalization + summaries · `src/dtmf.ts` touch-tone synthesis.
 
+## Contributing
+
+Contributions are welcome — pull requests are happily accepted. If you're planning something substantial (a new telephony provider, protocol changes), open an issue first so we can talk it through before you sink time in.
+
+Found a bug or have a feature request? [Open an issue on GitHub](https://github.com/TristanBrotherton/openclaw-voice-call-realtime/issues) — please include gateway log excerpts (with `logTranscripts` off, they're privacy-safe by default) and your config with credentials removed.
+
+Before submitting a PR: `npm test` should pass (120 tests), and please keep personal data — real names, phone numbers, domains — out of tests and examples; use the generic personas already in the codebase.
+
 ## Credits & license
 
 MIT. Forked from the official [OpenClaw](https://openclaw.ai) `voice-call` plugin (MIT, © OpenClaw Foundation) and extended with the GA Realtime migration, in-call tools, graceful hangup, DTMF, transcripts/summaries, and reliability fixes.
