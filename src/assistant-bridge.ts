@@ -115,8 +115,13 @@ export function resolveCallParty(params: {
     params.trustStirA === false ||
     hasStirAttestationA(params.stirVerstat);
 
+  // Verified tiers (first-party / trusted-contact) are granted ONLY by strong,
+  // non-spoofable signals: a match against the owner's or a trusted number,
+  // and — for inbound — carrier attestation. They are NEVER granted by the
+  // agent-supplied callParty label, so a mislabeled outbound third-party call
+  // cannot unlock owner-only capabilities (home control, full actions).
   if (inboundIdTrustworthy) {
-    if (params.direction === "inbound" && inList(params.ownerNumbers)) {
+    if (inList(params.ownerNumbers)) {
       return "first-party";
     }
     if (inList(params.trustedNumbers)) {
@@ -124,9 +129,8 @@ export function resolveCallParty(params: {
     }
   }
 
-  if (params.callParty === "first-party") {
-    return "first-party";
-  }
+  // The label can only mark a call as third-party (for framing/privacy); it can
+  // never promote a call to a verified tier.
   if (params.callParty === "third-party") {
     return "third-party";
   }

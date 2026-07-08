@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.7.20
+
+### Changes
+
+- Hardening: verified tiers (first-party / trusted-contact), which gate the
+  Home Assistant tools and full-action bridge, are now granted ONLY by strong
+  signals — owner/trusted number match (with STIR attestation for inbound) or
+  spoken passphrase. The agent-supplied call-party label can no longer promote
+  a call to a verified tier, so a mislabeled outbound third-party call or an
+  inbound call from another number can never reach owner-only capabilities.
+
 ## 2026.7.19
 
 ### Changes

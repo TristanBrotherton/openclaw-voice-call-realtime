@@ -92,3 +92,55 @@ describe("controlHomeEntity", () => {
     );
   });
 });
+
+import { resolveCallParty } from "./assistant-bridge.js";
+
+describe("home/action gating: verified tiers require strong signals, not labels", () => {
+  const owner = "+15550001111";
+  const trusted = "+15550002222";
+  const stranger = "+15559998888";
+
+  it("outbound to the owner's own number is first-party (no label needed)", () => {
+    expect(
+      resolveCallParty({ direction: "outbound", to: owner, ownerNumbers: [owner], trustedNumbers: [] }),
+    ).toBe("first-party");
+  });
+
+  it("outbound to a stranger is NEVER promoted to first-party by a mislabel", () => {
+    // The agent wrongly tags a third-party call as first-party — must not unlock owner tier.
+    expect(
+      resolveCallParty({
+        direction: "outbound",
+        to: stranger,
+        callParty: "first-party",
+        ownerNumbers: [owner],
+        trustedNumbers: [trusted],
+      }),
+    ).toBe("unverified");
+  });
+
+  it("inbound from a stranger is unverified even with a first-party label", () => {
+    expect(
+      resolveCallParty({
+        direction: "inbound",
+        from: stranger,
+        callParty: "first-party",
+        ownerNumbers: [owner],
+        trustedNumbers: [],
+        stirVerstat: "TN-Validation-Passed-A",
+      }),
+    ).toBe("unverified");
+  });
+
+  it("inbound from the owner's number needs attestation to be first-party", () => {
+    const base = { direction: "inbound", from: owner, ownerNumbers: [owner], trustedNumbers: [] };
+    expect(resolveCallParty(base)).toBe("unverified"); // spoofable, no attestation
+    expect(resolveCallParty({ ...base, stirVerstat: "TN-Validation-Passed-A" })).toBe("first-party");
+  });
+
+  it("outbound to a trusted number is trusted-contact", () => {
+    expect(
+      resolveCallParty({ direction: "outbound", to: trusted, ownerNumbers: [owner], trustedNumbers: [trusted] }),
+    ).toBe("trusted-contact");
+  });
+});
