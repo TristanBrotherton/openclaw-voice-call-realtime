@@ -455,11 +455,16 @@ export class VoiceCallWebhookServer {
             talkingPoints: call?.metadata?.talkingPoints as string[] | undefined,
           });
 
-          // Screening-awareness prompt for outbound calls
+          // Screening-awareness prompt for outbound calls. A per-call identity
+          // (initiate_call caller_identity) overrides the configured default.
+          const perCallIdentity =
+            typeof call?.metadata?.callerIdentity === "string"
+              ? call.metadata.callerIdentity
+              : undefined;
           const screeningPrompt =
             this.config.callScreening?.enabled && call?.direction === "outbound"
               ? buildScreeningContextPrompt({
-                  callerIdentity: this.config.callScreening.callerIdentity,
+                  callerIdentity: perCallIdentity ?? this.config.callScreening.callerIdentity,
                 })
               : undefined;
 

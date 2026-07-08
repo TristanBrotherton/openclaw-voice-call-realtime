@@ -102,3 +102,25 @@ describe("ending mode barge-in suppression", () => {
     expect(bargeIns).toBe(2);
   });
 });
+
+describe("per-call caller identity", () => {
+  it("stores caller_identity in call metadata for the screening prompt", async () => {
+    const { manager } = await createManagerHarness();
+    const { callId, success } = await manager.initiateCall("+15550000011", undefined, {
+      message: "Hi Riley!",
+      callerIdentity: "Hi, this is Sam, Alex's assistant.",
+    });
+    expect(success).toBe(true);
+    expect(manager.getCall(callId)?.metadata?.callerIdentity).toBe(
+      "Hi, this is Sam, Alex's assistant.",
+    );
+  });
+
+  it("omits the key when not provided", async () => {
+    const { manager } = await createManagerHarness();
+    const { callId } = await manager.initiateCall("+15550000012", undefined, {
+      message: "Hello",
+    });
+    expect(manager.getCall(callId)?.metadata).not.toHaveProperty("callerIdentity");
+  });
+});

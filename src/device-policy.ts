@@ -152,14 +152,13 @@ export function buildScreeningContextPrompt(
     return undefined;
   }
   return (
-    "Call screening awareness: The callee's phone may use an automated screening system " +
-    "that answers before the real person and asks you to identify yourself " +
-    '(e.g. "Who is calling?" or "Please state your name and reason for calling"). ' +
-    "If you hear such a prompt, respond clearly and concisely with: " +
-    `"${params.callerIdentity}". ` +
-    "Then wait silently for the callee to accept the call. " +
-    "Once the real person comes on the line, deliver your main message normally. " +
-    "Do not repeat the full identification if the callee greets you after screening."
+    "Identity and call screening: When you need to identify yourself — to a call " +
+    "screening system, on voicemail, or when asked who is calling — use the identity " +
+    "given in your call instructions if one was provided; those always take priority. " +
+    `Only if your instructions do not specify an identity, default to: "${params.callerIdentity}". ` +
+    "For screening prompts, state the identity clearly and concisely, then wait " +
+    "silently for the callee to accept. Once the real person is on the line, deliver " +
+    "your message normally and do not repeat the full identification."
   );
 }
 

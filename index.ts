@@ -126,6 +126,14 @@ const VoiceCallToolSchema = Type.Union([
           "Who is being called: first-party (the owner/user) or third-party (a business, restaurant, contact, etc.)",
       }),
     ),
+    caller_identity: Type.Optional(
+      Type.String({
+        description:
+          "How the assistant should identify itself on this call (to call screening, " +
+          "voicemail, or when asked who is calling), e.g. \"Hi, this is Sam, Alex's " +
+          "assistant.\" Overrides the configured default identity.",
+      }),
+    ),
   }),
   Type.Object({
     action: Type.Literal("continue_call"),
@@ -255,11 +263,16 @@ const voiceCallPlugin = {
             params?.call_party === "first-party" || params?.call_party === "third-party"
               ? params.call_party
               : undefined;
+          const callerIdentity =
+            typeof params?.caller_identity === "string" && params.caller_identity.trim()
+              ? params.caller_identity.trim()
+              : undefined;
           const result = await rt.manager.initiateCall(to, undefined, {
             message,
             mode,
             talkingPoints,
             callParty,
+            callerIdentity,
           });
           if (!result.success) {
             respond(false, { error: result.error || "initiate failed" });
@@ -451,6 +464,10 @@ const voiceCallPlugin = {
                   params.call_party === "first-party" || params.call_party === "third-party"
                     ? params.call_party
                     : undefined;
+                const callerIdentity =
+                  typeof params.caller_identity === "string" && params.caller_identity.trim()
+                    ? params.caller_identity.trim()
+                    : undefined;
                 const result = await rt.manager.initiateCall(to, undefined, {
                   message,
                   mode:
@@ -459,6 +476,7 @@ const voiceCallPlugin = {
                       : undefined,
                   talkingPoints,
                   callParty,
+                  callerIdentity,
                 });
                 if (!result.success) {
                   throw new Error(result.error || "initiate failed");

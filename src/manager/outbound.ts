@@ -153,6 +153,7 @@ export async function initiateCall(
       mode,
       ...(opts.talkingPoints?.length && { talkingPoints: opts.talkingPoints }),
       ...(opts.callParty && { callParty: opts.callParty }),
+      ...(opts.callerIdentity && { callerIdentity: opts.callerIdentity }),
     },
   };
 

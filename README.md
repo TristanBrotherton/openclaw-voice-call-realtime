@@ -223,6 +223,7 @@ Your OpenClaw agent gets a `voice_call` tool with these actions:
   "message": "Hi! I'm calling on behalf of Alex to book a table.",
   "mode": "conversation",
   "call_party": "third-party",
+  "caller_identity": "Hi, this is Sam, Alex's assistant.",   // optional per-call identity
   "talking_points": ["Table for 2", "Friday around 7pm", "Get a confirmation number"] }
 
 // Check on it
@@ -250,7 +251,7 @@ Gateway RPCs are also available: `voicecall-tristan.initiate`, `.status`, `.tran
 | `streaming.realtimeVoice` | `alloy` | `alloy` `ash` `ballad` `coral` `echo` `sage` `shimmer` `verse` |
 | `streaming.realtimeSystemPrompt` | — | Base personality/instructions for the voice AI |
 | `streaming.realtimePolicy.maxSessionMs` | `7200000` | Realtime session lifetime cap; keep above `maxDurationSeconds` |
-| `callScreening.callerIdentity` | — | Phrase spoken to call-screening systems |
+| `callScreening.callerIdentity` | — | Default identity for screening/voicemail; per-call `caller_identity` overrides it |
 | `inboundPolicy` | `disabled` | `allowlist` + `allowFrom: ["+1555…"]` to accept inbound |
 | `summaryModel` | `gpt-4o-mini` | Chat model for end-of-call summaries |
 | `skipSignatureVerification` | `false` | Leave `false` in production |

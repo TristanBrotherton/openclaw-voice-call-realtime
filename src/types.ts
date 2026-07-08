@@ -281,6 +281,8 @@ export type OutboundCallOptions = {
   talkingPoints?: string[];
   /** Who is being called — first-party (owner/user) or third-party (restaurant, business, etc.) */
   callParty?: CallParty;
+  /** How the assistant should identify itself on this call (overrides callScreening.callerIdentity) */
+  callerIdentity?: string;
 };
 
 // -----------------------------------------------------------------------------
