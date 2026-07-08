@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026.7.21
+
+### Changes
+
+- Phantom-call prevention: when a call's media stream drops without a
+  terminal provider event, the call is ended after a grace period
+  (`streaming.disconnectGraceMs`, default 45s) instead of lingering as an
+  "active" call that blocks new calls under maxConcurrentCalls. Grace timer
+  is cancelled if the stream reconnects.
+
 ## 2026.7.20
 
 ### Changes

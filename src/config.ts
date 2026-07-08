@@ -323,6 +323,12 @@ export const VoiceCallStreamingConfigSchema = z
     maxPendingConnectionsPerIp: z.number().int().positive().default(4),
     /** Hard cap for all open media stream sockets (pending + active). */
     maxConnections: z.number().int().positive().default(128),
+    /**
+     * After the media stream disconnects, wait this long for it to reconnect
+     * or for a terminal provider webhook; if neither arrives, end the call so
+     * it cannot linger as a phantom that blocks new calls. 0 disables.
+     */
+    disconnectGraceMs: z.number().int().nonnegative().default(45000),
   })
   .strict()
   .default({

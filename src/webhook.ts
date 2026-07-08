@@ -69,6 +69,8 @@ export class VoiceCallWebhookServer {
 
   /** Media stream handler for bidirectional audio (when streaming enabled) */
   private mediaStreamHandler: MediaStreamHandler | null = null;
+  /** Per-call grace timers to end phantom calls whose stream dropped without a terminal event */
+  private disconnectGraceTimers = new Map<string, NodeJS.Timeout>();
   /** Optional bridge for relaying mid-call questions to the owner's agent */
   private assistantBridge: import("./assistant-bridge.js").AssistantBridge | null = null;
   /** Optional direct-message sender to the owner (for ask_owner) */
@@ -651,6 +653,11 @@ export class VoiceCallWebhookServer {
       },
       onConnect: (callId: string, streamSid: string) => {
         console.log(`[voice-call] Media stream connected: ${callId} -> ${streamSid}`);
+        const pendingGrace = this.disconnectGraceTimers.get(callId);
+        if (pendingGrace) {
+          clearTimeout(pendingGrace);
+          this.disconnectGraceTimers.delete(callId);
+        }
         if (this.provider.name === "twilio") {
           (this.provider as TwilioProvider).registerCallStream(callId, streamSid);
         }
@@ -669,13 +676,24 @@ export class VoiceCallWebhookServer {
         console.log(`[voice-call] Media stream disconnected: ${callId}`);
         this.rejectPendingOwnerQuestion(callId);
         const disconnectedCall = this.manager.getCallByProviderCallId(callId);
-        if (disconnectedCall) {
-          console.log(
-            `[voice-call] Stream disconnected for call ${disconnectedCall.callId}; keeping phone call alive and waiting for provider/webhook state instead of auto-hanging up`,
-          );
-        }
         if (this.provider.name === "twilio") {
           (this.provider as TwilioProvider).unregisterCallStream(callId);
+        }
+        const graceMs = this.config.streaming?.disconnectGraceMs ?? 45000;
+        if (disconnectedCall && graceMs > 0) {
+          const existing = this.disconnectGraceTimers.get(callId);
+          if (existing) clearTimeout(existing);
+          const timer = setTimeout(() => {
+            this.disconnectGraceTimers.delete(callId);
+            const call = this.manager.getCallByProviderCallId(callId);
+            if (!call) return; // already ended (terminal webhook handled it)
+            console.log(
+              `[voice-call] Stream did not recover in ${graceMs}ms; ending call ${call.callId} to prevent a phantom`,
+            );
+            void this.manager.endCall(call.callId).catch(() => {});
+          }, graceMs);
+          timer.unref?.();
+          this.disconnectGraceTimers.set(callId, timer);
         }
       },
     };
