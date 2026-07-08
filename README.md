@@ -174,7 +174,7 @@ In `~/.openclaw/openclaw.json`:
             "sttProvider": "openai-realtime-conversation",
             "realtimeModel": "gpt-realtime-2.1",
             "realtimeVoice": "alloy",
-            "openaiApiKey": "sk-...",
+            "openaiApiKey": "YOUR_OPENAI_API_KEY",
             "realtimePolicy": { "idleTimeoutMs": 120000, "maxSessionMs": 7200000 }
           },
           "callScreening": {
