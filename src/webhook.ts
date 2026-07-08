@@ -604,7 +604,7 @@ export class VoiceCallWebhookServer {
               : undefined;
 
           const bridgeGuidance = this.assistantBridge
-            ? "- For anything you need to know or decide mid-call (availability, preferences, addresses, facts), first tell the other party you need a moment, then use ask_assistant with one specific question. " +
+            ? "- For anything you need to know or decide mid-call (availability, preferences, addresses, facts), FIRST tell the other party this may take up to a minute, then use ask_assistant with one specific question. " +
               `Today's date is ${new Date().toISOString().slice(0, 10)}.\n`
             : "";
           const calendarGuidance =

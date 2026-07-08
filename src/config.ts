@@ -502,7 +502,13 @@ export const VoiceCallConfigSchema = z
         /** Enable the ask_assistant in-call tool */
         enabled: z.boolean().default(false),
         /** Max time to wait for the agent's answer (ms) */
-        timeoutMs: z.number().int().positive().default(45000),
+        timeoutMs: z.number().int().positive().default(60000),
+        /**
+         * Optional model override for bridge runs (provider/model id), e.g. a
+         * faster model than the agent's default. The agent keeps its normal
+         * tools either way.
+         */
+        model: z.string().min(1).optional(),
         /**
          * Trusted phone numbers (E.164). Calls with these numbers are treated
          * like the owner for the bridge action policy: the agent may perform
@@ -512,7 +518,7 @@ export const VoiceCallConfigSchema = z
         trustedNumbers: z.array(E164Schema).default([]),
       })
       .strict()
-      .default({ enabled: false, timeoutMs: 45000, trustedNumbers: [] }),
+      .default({ enabled: false, timeoutMs: 60000, trustedNumbers: [] }),
 
     calendar: z
       .object({

@@ -18,6 +18,7 @@ export type SubagentRuntime = {
   run: (params: {
     sessionKey: string;
     message: string;
+    model?: string;
     extraSystemPrompt?: string;
     lightContext?: boolean;
     deliver?: boolean;
@@ -135,14 +136,16 @@ export function buildBridgeSystemPrompt(callContext: string): string {
 export function createAssistantBridge(params: {
   subagent: SubagentRuntime;
   timeoutMs?: number;
+  model?: string;
 }): AssistantBridge {
-  const timeoutMs = params.timeoutMs ?? 45000;
+  const timeoutMs = params.timeoutMs ?? 60000;
 
   return async (question: string, callContext: string): Promise<string> => {
     const sessionKey = `voicecall-bridge-${crypto.randomUUID()}`;
     const { runId } = await params.subagent.run({
       sessionKey,
       message: question,
+      ...(params.model ? { model: params.model } : {}),
       extraSystemPrompt: buildBridgeSystemPrompt(callContext),
       lightContext: true,
       deliver: false,

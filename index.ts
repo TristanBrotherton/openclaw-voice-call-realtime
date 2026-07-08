@@ -204,7 +204,11 @@ const voiceCallPlugin = {
           .subagent;
         const assistantBridge =
           config.assistantBridge?.enabled && subagent
-            ? createAssistantBridge({ subagent, timeoutMs: config.assistantBridge.timeoutMs })
+            ? createAssistantBridge({
+                subagent,
+                timeoutMs: config.assistantBridge.timeoutMs,
+                model: config.assistantBridge.model,
+              })
             : undefined;
         if (config.assistantBridge?.enabled && !subagent) {
           api.logger.warn(

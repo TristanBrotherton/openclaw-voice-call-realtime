@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026.7.11
+
+### Changes
+
+- Fixed duplicate empty call records: the provider's final status callback
+  after a bot-initiated hangup no longer resurrects the call.
+- Fixed double self-introduction at call start (greeting + identity prompt
+  racing the VAD auto-response).
+- ask_assistant: default timeout raised to 60s, optional
+  `assistantBridge.model` override for faster bridge runs, and the voice AI
+  now warns the other party the check may take up to a minute.
+
 ## 2026.7.10
 
 ### Changes

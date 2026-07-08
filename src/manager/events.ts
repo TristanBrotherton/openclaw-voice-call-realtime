@@ -132,6 +132,12 @@ export function processEvent(ctx: EventContext, event: NormalizedEvent): void {
   // Auto-register untracked calls arriving via webhook. This covers both
   // true inbound calls and externally-initiated outbound-api calls (e.g. calls
   // placed directly via the Twilio REST API pointing at our webhook URL).
+  // Never auto-register from terminal events: after a bot-initiated hangup the
+  // call is already removed from activeCalls, and the provider's final status
+  // callback would otherwise resurrect it as a duplicate empty record.
+  if (!call && (event.type === "call.ended" || event.type === "call.error")) {
+    return;
+  }
   if (!call && providerCallId && eventDirection) {
     // Apply inbound policy for true inbound calls; external outbound-api calls
     // are implicitly trusted because the caller controls the webhook URL.

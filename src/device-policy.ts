@@ -158,7 +158,10 @@ export function buildScreeningContextPrompt(
     `Only if your instructions do not specify an identity, default to: "${params.callerIdentity}". ` +
     "For screening prompts, state the identity clearly and concisely, then wait " +
     "silently for the callee to accept. Once the real person is on the line, deliver " +
-    "your message normally and do not repeat the full identification."
+    "your message normally and do not repeat the full identification. " +
+    "Introduce yourself AT MOST ONCE per call: if you have already greeted or " +
+    "identified yourself, never repeat the introduction, even after a pause or " +
+    "an automatic reply."
   );
 }
 

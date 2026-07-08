@@ -101,3 +101,33 @@ describe("call transcript finalization", () => {
     expect(transcript?.state).toBe("hangup-bot");
   });
 });
+
+describe("terminal-event auto-registration guard", () => {
+  it("does not resurrect an ended call from a late status callback", async () => {
+    const { manager } = await createManagerHarness();
+    const { callId } = await manager.initiateCall("+15550000020");
+    markCallAnswered(manager, callId, "evt-late-1");
+
+    await manager.endCall(callId);
+    expect(manager.getActiveCalls().length).toBe(0);
+
+    // Twilio's final "completed" status callback arrives after we hung up.
+    manager.processEvent({
+      id: "evt-late-2",
+      type: "call.ended",
+      callId: "request-uuid",
+      providerCallId: "request-uuid",
+      direction: "outbound",
+      from: "+15550000000",
+      to: "+15550000020",
+      timestamp: Date.now(),
+      reason: "completed",
+    });
+
+    // No duplicate record should have been created.
+    expect(manager.getActiveCalls().length).toBe(0);
+    const history = await manager.getCallHistory(50);
+    const forNumber = history.filter((c) => c.to === "+15550000020");
+    expect(new Set(forNumber.map((c) => c.callId)).size).toBe(1);
+  });
+});
