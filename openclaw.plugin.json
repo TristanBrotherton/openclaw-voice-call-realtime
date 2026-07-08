@@ -546,6 +546,11 @@
               "auto"
             ]
           },
+          "language": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 5
+          },
           "streamPath": {
             "default": "/voice/stream",
             "type": "string",

@@ -305,7 +305,12 @@ export class VoiceCallWebhookServer {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.warn(`[voice-call] ask_assistant failed: ${message}`);
-          return `Error: ${message}. Continue the call without this; offer to follow up later if needed.`;
+          return (
+            "The answer is not available right now (internal — do not read this aloud). " +
+            "Tell the other party naturally that you can't get to it at the moment and " +
+            "that the owner will get the answer by text shortly. Record the open item " +
+            "with report_call_outcome so it is followed up after the call."
+          );
         }
       }
 
@@ -702,10 +707,12 @@ export class VoiceCallWebhookServer {
               {
                 name: "check_calendar",
                 description:
-                  "Check the owner's calendar availability (free/busy only) for a " +
-                  "date range. Use this before agreeing to any appointment time, or " +
-                  "when the other party proposes a time. Returns per-day busy " +
-                  "windows; anything not listed as busy is free.",
+                  "Look up the owner's calendar for a date range — use this for ANY " +
+                  "question about the owner's schedule: what's coming up, when an " +
+                  "event is, whether a time is free, before agreeing to appointments. " +
+                  "It responds in about a second. The level of detail adapts " +
+                  "automatically to who is on the call. Never use ask_assistant for " +
+                  "calendar questions.",
                 parameters: {
                   type: "object",
                   properties: {
@@ -751,6 +758,7 @@ export class VoiceCallWebhookServer {
         vadThreshold: this.config.streaming?.vadThreshold,
         turnDetection: this.config.streaming?.turnDetection,
         vadEagerness: this.config.streaming?.vadEagerness,
+        language: this.config.streaming?.language,
         tools: callTools,
       });
       const conversationProvider = {
@@ -825,7 +833,7 @@ export class VoiceCallWebhookServer {
               : undefined;
 
           const bridgeGuidance = this.assistantBridge
-            ? "- For anything you need to know or decide mid-call (availability, preferences, addresses, facts), FIRST tell the other party this may take up to a minute, then use ask_assistant with one specific question. " +
+            ? "- For non-calendar things you need to know mid-call (preferences, addresses, facts), FIRST tell the other party this may take up to a minute, then use ask_assistant with one specific question. " +
               `Today's date is ${new Date().toISOString().slice(0, 10)}.\n`
             : "";
           const askOwnerGuidance =
@@ -836,13 +844,14 @@ export class VoiceCallWebhookServer {
             this.config.transfer?.enabled && (this.config.transfer.number || this.config.toNumber)
               ? "- If the other party genuinely needs the owner in person (payment, authorization, or they insist), use transfer_to_owner — do not attempt those things yourself.\n"
               : "";
-          const calendarGuidance =
+          const calendarEnabled =
             this.config.calendar?.enabled &&
-            (this.config.calendar.icsUrl || this.config.calendar.command)
-              ? "- When scheduling anything, use check_calendar before agreeing to a time. " +
-                `Today's date is ${new Date().toISOString().slice(0, 10)}. ` +
-                "Share availability as times only; never invent calendar details.\n"
-              : "";
+            (this.config.calendar.icsUrl || this.config.calendar.command);
+          const calendarGuidance = calendarEnabled
+            ? "- For ANY question about the owner's calendar or schedule (what's next, when is X, is a time free), use check_calendar — it answers in about a second. Never use ask_assistant for calendar lookups. " +
+              `Today's date is ${new Date().toISOString().slice(0, 10)}. ` +
+              "Never invent calendar details.\n"
+            : "";
           const toolGuidancePrompt =
             "Call management tools:\n" +
             bridgeGuidance +
@@ -854,7 +863,8 @@ export class VoiceCallWebhookServer {
             "(2) use report_call_outcome exactly once with the goal status and every concrete fact gathered (times, prices, hours, names, confirmation numbers); " +
             "(3) use end_call with final_message set to your goodbye line.\n" +
             "- Never announce that you are about to confirm something and then hang up — say the details first, then end. " +
-            "Anything you have not spoken aloud (or put in final_message) will never be heard. Never leave the line open after the conversation is over.";
+            "Anything you have not spoken aloud (or put in final_message) will never be heard. Never leave the line open after the conversation is over.\n" +
+            "- Tool results, timeouts, and error messages are INTERNAL. Never read them aloud, and never say words like 'system', 'tool', 'lookup', 'timed out', or 'error' to the other party. If something fails, speak like a human colleague: \"I can't get to that right now — I'll text you the answer in a few minutes\" — and record it via report_call_outcome so it is followed up.";
 
           // Merge base system prompt + device policy + call context + screening + tool guidance into updated instructions
           const promptParts = [

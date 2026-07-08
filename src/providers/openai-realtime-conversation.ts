@@ -19,6 +19,7 @@ export interface RealtimeConversationConfig {
   vadThreshold?: number;
   turnDetection?: "server_vad" | "semantic_vad";
   vadEagerness?: "low" | "medium" | "high" | "auto";
+  language?: string;
   tools?: RealtimeToolDefinition[];
 }
 
@@ -79,6 +80,7 @@ export class OpenAIRealtimeConversationProvider {
   private tools: RealtimeToolDefinition[];
   private turnDetection: "server_vad" | "semantic_vad";
   private vadEagerness: "low" | "medium" | "high" | "auto";
+  private language: string | undefined;
 
   constructor(config: RealtimeConversationConfig) {
     if (!config.apiKey) {
@@ -93,6 +95,7 @@ export class OpenAIRealtimeConversationProvider {
     this.tools = config.tools ?? [];
     this.turnDetection = config.turnDetection ?? "server_vad";
     this.vadEagerness = config.vadEagerness ?? "auto";
+    this.language = config.language;
   }
 
   createSession(): RealtimeConversationSession {
@@ -106,6 +109,7 @@ export class OpenAIRealtimeConversationProvider {
       this.tools,
       this.turnDetection,
       this.vadEagerness,
+      this.language,
     );
   }
 }
@@ -152,6 +156,7 @@ class OpenAIRealtimeConversationSession implements RealtimeConversationSession {
     private readonly tools: RealtimeToolDefinition[] = [],
     private readonly turnDetection: "server_vad" | "semantic_vad" = "server_vad",
     private readonly vadEagerness: "low" | "medium" | "high" | "auto" = "auto",
+    private readonly language: string | undefined = undefined,
   ) {
     this.currentInstructions = systemPrompt;
   }
@@ -169,7 +174,10 @@ class OpenAIRealtimeConversationSession implements RealtimeConversationSession {
       audio: {
         input: {
           format: { type: "audio/pcmu" },
-          transcription: { model: "gpt-4o-transcribe" },
+          transcription: {
+            model: "gpt-4o-transcribe",
+            ...(this.language ? { language: this.language } : {}),
+          },
           turn_detection:
             this.turnDetection === "semantic_vad"
               ? { type: "semantic_vad", eagerness: this.vadEagerness }

@@ -306,6 +306,8 @@ export const VoiceCallStreamingConfigSchema = z
     turnDetection: z.enum(["server_vad", "semantic_vad"]).default("server_vad"),
     /** semantic_vad eagerness to respond */
     vadEagerness: z.enum(["low", "medium", "high", "auto"]).default("auto"),
+    /** Transcription language hint (ISO-639-1, e.g. "en") — prevents hallucinated foreign-language transcripts on short utterances */
+    language: z.string().min(2).max(5).optional(),
     /** WebSocket path for media stream connections */
     streamPath: z.string().min(1).default("/voice/stream"),
     /** Managed realtime session lifecycle policy */

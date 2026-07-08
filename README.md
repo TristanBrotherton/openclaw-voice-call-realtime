@@ -374,6 +374,7 @@ Default is `server_vad` (responds after `silenceDurationMs` of silence). `semant
 | `askOwner.enabled` | `false` | `ask_owner` tool — text you a question mid-call and relay your reply into the call |
 | `transfer.enabled` / `transfer.number` | `false` | `transfer_to_owner` tool — hand the call to your real phone |
 | `streaming.turnDetection` | `server_vad` | `semantic_vad` for thought-aware turn taking (`vadEagerness` tunes it) |
+| `streaming.language` | — | Transcription language hint (e.g. `"en"`) — avoids hallucinated foreign-language transcripts |
 | `skipSignatureVerification` | `false` | Leave `false` in production |
 | `deviceProfiles` | `[]` | Per-caller response length / forbidden actions / instructions |
 

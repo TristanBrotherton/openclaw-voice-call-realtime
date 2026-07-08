@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026.7.15
+
+### Changes
+
+- Fixed calendar-question routing: check_calendar is now described (and the
+  guidance enforces) as the tool for ANY schedule question; the model no
+  longer routes calendar lookups through the slow ask_assistant path.
+- Anti-leak etiquette: tool results/timeouts/errors are marked internal —
+  the voice AI must never say "system", "tool", "lookup", "timed out" or
+  similar to the other party; failures are voiced as natural follow-ups.
+- `streaming.language`: transcription language hint — prevents hallucinated
+  foreign-language transcripts on short utterances.
+
 ## 2026.7.14
 
 ### Changes
