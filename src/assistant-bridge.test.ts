@@ -91,6 +91,28 @@ describe("createAssistantBridge", () => {
   });
 });
 
+describe("bridge action policy", () => {
+  it("forbids actions on third-party calls", async () => {
+    const { buildBridgeSystemPrompt } = await import("./assistant-bridge.js");
+    const prompt = buildBridgeSystemPrompt("outbound call to +15550001111, party: third-party");
+    expect(prompt).toContain("do NOT perform any state-changing action");
+  });
+
+  it("allows owner-requested actions on first-party calls", async () => {
+    const { buildBridgeSystemPrompt } = await import("./assistant-bridge.js");
+    const prompt = buildBridgeSystemPrompt("outbound call to +15550001111, party: first-party");
+    expect(prompt).toContain("call is with the owner");
+    expect(prompt).not.toContain("do NOT perform any state-changing action");
+  });
+
+  it("treats unknown parties as third-party", async () => {
+    const { buildBridgeSystemPrompt } = await import("./assistant-bridge.js");
+    const prompt = buildBridgeSystemPrompt("inbound call from +15550002222");
+    expect(prompt).toContain("unverified");
+    expect(prompt).toContain("do not perform state-changing actions");
+  });
+});
+
 describe("calendar free/busy", () => {
   it("merges overlapping busy intervals", () => {
     const merged = mergeIntervals([
