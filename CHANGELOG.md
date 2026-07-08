@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026.7.9
+
+### Changes
+
+- New `ask_assistant` in-call tool (opt-in via `assistantBridge.enabled`):
+  the voice AI can relay a question to the owner's OpenClaw agent mid-call
+  and use the answer — calendar availability, preferences, facts. The agent
+  answers via a scoped subagent turn and is told the question comes from a
+  live call, so it applies its own judgment about what to share.
+- New `check_calendar` in-call tool (opt-in via `calendar.icsUrl`): free/busy
+  from a secret iCal feed (Google/iCloud/Outlook/Fastmail), computed locally.
+  Only busy windows are exposed — never event titles or details.
+
 ## 2026.7.8
 
 ### Changes

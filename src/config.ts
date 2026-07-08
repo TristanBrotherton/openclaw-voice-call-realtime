@@ -486,6 +486,42 @@ export const VoiceCallConfigSchema = z
      * summaries are unaffected.
      */
     logTranscripts: z.boolean().default(false),
+
+    /**
+     * Calendar availability for in-call scheduling. When configured, the
+     * voice AI gets a check_calendar tool that returns free/busy windows
+     * (never event details) from a secret iCal feed URL.
+     */
+    /**
+     * Mid-call assistant bridge: gives the voice AI an ask_assistant tool
+     * that relays questions to the owner's OpenClaw agent (full toolset —
+     * calendar, search, smart home, ...) and speaks the answer.
+     */
+    assistantBridge: z
+      .object({
+        /** Enable the ask_assistant in-call tool */
+        enabled: z.boolean().default(false),
+        /** Max time to wait for the agent's answer (ms) */
+        timeoutMs: z.number().int().positive().default(45000),
+      })
+      .strict()
+      .default({ enabled: false, timeoutMs: 45000 }),
+
+    calendar: z
+      .object({
+        /** Enable the in-call check_calendar tool */
+        enabled: z.boolean().default(false),
+        /** Secret iCal (ICS) feed URL — Google Calendar: Settings → "Secret address in iCal format" */
+        icsUrl: z.string().url().optional(),
+        /** Local hour the day starts for availability purposes (0-23) */
+        dayStartHour: z.number().int().min(0).max(23).default(8),
+        /** Local hour the day ends for availability purposes (0-23) */
+        dayEndHour: z.number().int().min(0).max(23).default(21),
+        /** How long to cache the fetched feed (ms) */
+        cacheTtlMs: z.number().int().positive().default(300000),
+      })
+      .strict()
+      .default({ enabled: false, dayStartHour: 8, dayEndHour: 21, cacheTtlMs: 300000 }),
   })
   .strict();
 

@@ -22,6 +22,8 @@ Every "AI agent" can send an email. Almost none of them can call the dry cleaner
   - `press_phone_keys` — synthesized DTMF touch-tones for navigating IVR menus ("press 2 for reservations")
   - `report_call_outcome` — structured result capture (status + every fact gathered: times, prices, confirmation numbers)
   - `end_call` — graceful hangup: speaks a closing line, waits for it to *actually play out* on the line (Twilio mark echo), then disconnects. No clipped goodbyes, no lingering dead air.
+  - `ask_assistant` (optional) — the killer feature for scheduling: mid-call, the voice AI relays a question to your OpenClaw agent ("is Wednesday 2pm free?") and speaks the answer. Your agent answers with its full toolset — calendar, search, smart home, anything — so the phone persona stays thin and your agent stays the brain.
+  - `check_calendar` (optional) — zero-dependency alternative: free/busy straight from a secret iCal feed URL (Google Calendar, iCloud, Outlook, Fastmail). Only busy windows are exposed — never event titles or details.
 - **Transcripts & summaries** — every call is finalized into a Markdown transcript with an AI-generated summary and the reported outcome. Retrievable after the call via the `get_transcript` tool action.
 - **Call screening awareness** — handles Google Call Screen and voicemail gatekeepers by identifying itself with a configurable identity phrase.
 - **Goal-directed calls** — pass `talking_points` and `call_party` (first-party vs third-party) and the AI stays on task: cover the points, collect the answers, confirm out loud, wrap up.
@@ -32,7 +34,7 @@ Every "AI agent" can send an email. Almost none of them can call the dry cleaner
 
 ## Use cases
 
-- **Reservations & appointments** — restaurants, salons, dentists: "book me the earliest slot Thursday afternoon."
+- **Reservations & appointments** — restaurants, salons, dentists: "book me the earliest slot Thursday afternoon." With the assistant bridge or calendar tool enabled, the AI checks your real availability before agreeing to a time.
 - **Information gathering** — opening hours, stock checks, price quotes, "is the kitchen still open?"
 - **Errand triage** — call the pharmacy about a refill, the contractor about a quote, the venue about parking.
 - **Notifications with a human touch** — a call that speaks a message and confirms it was heard, not just a text that might be missed.
@@ -255,6 +257,8 @@ Gateway RPCs are also available: `voicecall-tristan.initiate`, `.status`, `.tran
 | `inboundPolicy` | `disabled` | `allowlist` + `allowFrom: ["+1555…"]` to accept inbound |
 | `summaryModel` | `gpt-4o-mini` | Chat model for end-of-call summaries |
 | `logTranscripts` | `false` | Log call content to gateway logs (off by default — calls contain personal data) |
+| `assistantBridge.enabled` | `false` | Give the voice AI an `ask_assistant` tool that relays questions to your OpenClaw agent mid-call |
+| `calendar.enabled` + `calendar.icsUrl` | `false` | `check_calendar` free/busy tool from a secret iCal feed (no agent required) |
 | `skipSignatureVerification` | `false` | Leave `false` in production |
 | `deviceProfiles` | `[]` | Per-caller response length / forbidden actions / instructions |
 
@@ -263,7 +267,8 @@ Gateway RPCs are also available: `voicecall-tristan.initiate`, `.status`, `.tran
 - **Keep webhook signature verification on** (`skipSignatureVerification: false`). Your webhook URL is public; verification is what stops forged call events.
 - Media stream connections are authenticated with **per-call tokens** passed via TwiML `<Parameter>`, with pre-auth connection throttling on top.
 - **Inbound is off by default.** If you enable it, use `allowlist`.
-- The voice AI's only tools are call-control (hang up, record outcome, press keys) — it cannot touch your machine, files, or other OpenClaw tools from inside a call.
+- The voice AI's default tools are call-control only (hang up, record outcome, press keys) — it cannot touch your machine, files, or other OpenClaw tools from inside a call.
+- If you enable `assistantBridge`, your OpenClaw agent becomes the security boundary: every relayed question arrives marked as coming from a live call (with the caller's number and goal), and the agent is instructed to refuse anything private beyond the call's purpose. The voice AI never gets direct tool access — only the agent's spoken-word answers.
 - On third-party calls the AI is instructed not to volunteer private information beyond the call goal; add hard rules via `deviceProfiles[].forbiddenActions`.
 - Your Twilio auth token and OpenAI key live in your OpenClaw config — keep its permissions tight (`chmod 600`).
 - **Call content stays out of your logs by default.** Transcripts, partials, AI responses, and DTMF digits are logged as redacted lengths unless you opt in with `logTranscripts: true`. Transcript *files* (for `get_transcript`) are always written — they live in your call store, not the shared gateway log.

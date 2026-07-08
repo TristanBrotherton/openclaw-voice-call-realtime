@@ -23,6 +23,7 @@ import {
   type RealtimeToolResult,
 } from "./providers/openai-realtime-conversation.js";
 import { generateDtmfMulaw, isValidDtmfSequence } from "./dtmf.js";
+import { getAvailability } from "./calendar.js";
 import { createManagedRealtimeConversationSession } from "./providers/managed-realtime-conversation.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
 import type { TwilioProvider } from "./providers/twilio.js";
@@ -61,17 +62,21 @@ export class VoiceCallWebhookServer {
 
   /** Media stream handler for bidirectional audio (when streaming enabled) */
   private mediaStreamHandler: MediaStreamHandler | null = null;
+  /** Optional bridge for relaying mid-call questions to the owner's agent */
+  private assistantBridge: import("./assistant-bridge.js").AssistantBridge | null = null;
 
   constructor(
     config: VoiceCallConfig,
     manager: CallManager,
     provider: VoiceCallProvider,
     coreConfig?: CoreConfig,
+    options?: { assistantBridge?: import("./assistant-bridge.js").AssistantBridge },
   ) {
     this.config = config;
     this.manager = manager;
     this.provider = provider;
     this.coreConfig = coreConfig ?? null;
+    this.assistantBridge = options?.assistantBridge ?? null;
 
     // Initialize media stream handler if streaming is enabled
     if (config.streaming?.enabled) {
@@ -111,6 +116,63 @@ export class VoiceCallWebhookServer {
         return recorded
           ? "Outcome recorded for the owner."
           : "Could not find the active call to record against.";
+      }
+
+      case "ask_assistant": {
+        if (!this.assistantBridge) {
+          return "Error: the assistant bridge is not available on this call.";
+        }
+        const question = typeof args.question === "string" ? args.question.trim() : "";
+        if (!question) {
+          return "Error: question required.";
+        }
+        const call = this.manager.getCallByProviderCallId(providerCallId);
+        const context = [
+          call?.direction === "inbound" ? `inbound call from ${call.from}` : `outbound call to ${call?.to ?? "unknown"}`,
+          call?.metadata?.callParty ? `party: ${call.metadata.callParty}` : undefined,
+          Array.isArray(call?.metadata?.talkingPoints)
+            ? `goal: ${(call.metadata.talkingPoints as string[]).join("; ")}`
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        try {
+          const answer = await this.assistantBridge(question, context || "no additional context");
+          console.log(
+            `[voice-call] ask_assistant answered (${answer.length} chars) for ${providerCallId}`,
+          );
+          return answer;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[voice-call] ask_assistant failed: ${message}`);
+          return `Error: ${message}. Continue the call without this; offer to follow up later if needed.`;
+        }
+      }
+
+      case "check_calendar": {
+        const cal = this.config.calendar;
+        if (!cal?.enabled || !cal.icsUrl) {
+          return "Error: calendar is not configured.";
+        }
+        const startDate = typeof args.start_date === "string" ? args.start_date : "";
+        const endDate = typeof args.end_date === "string" ? args.end_date : startDate;
+        try {
+          const availability = await getAvailability(
+            {
+              icsUrl: cal.icsUrl,
+              dayStartHour: cal.dayStartHour,
+              dayEndHour: cal.dayEndHour,
+              cacheTtlMs: cal.cacheTtlMs,
+            },
+            startDate,
+            endDate,
+          );
+          return `Owner's availability:\n${availability}`;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[voice-call] check_calendar failed: ${message}`);
+          return `Error: could not check the calendar (${message}). Offer to confirm the time later instead of guessing.`;
+        }
       }
 
       case "press_phone_keys": {
@@ -383,6 +445,57 @@ export class VoiceCallWebhookServer {
             required: ["status", "details"],
           },
         },
+        ...(this.assistantBridge
+          ? [
+              {
+                name: "ask_assistant",
+                description:
+                  "Ask the owner's assistant a question mid-call and get an answer " +
+                  "to use on the call — check calendar availability, look up a " +
+                  "fact, get a preference or decision. Takes 10-40 seconds: tell " +
+                  "the other party you need a moment BEFORE calling this. Ask " +
+                  "one specific question at a time.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    question: {
+                      type: "string",
+                      description:
+                        "The specific question, with any needed context, e.g. " +
+                        "'Is Wednesday July 15 free between 2 and 4pm?'",
+                    },
+                  },
+                  required: ["question"],
+                },
+              },
+            ]
+          : []),
+        ...(this.config.calendar?.enabled && this.config.calendar.icsUrl
+          ? [
+              {
+                name: "check_calendar",
+                description:
+                  "Check the owner's calendar availability (free/busy only) for a " +
+                  "date range. Use this before agreeing to any appointment time, or " +
+                  "when the other party proposes a time. Returns per-day busy " +
+                  "windows; anything not listed as busy is free.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    start_date: {
+                      type: "string",
+                      description: "First day to check, YYYY-MM-DD.",
+                    },
+                    end_date: {
+                      type: "string",
+                      description: "Last day to check (inclusive), YYYY-MM-DD.",
+                    },
+                  },
+                  required: ["start_date", "end_date"],
+                },
+              },
+            ]
+          : []),
         {
           name: "press_phone_keys",
           description:
@@ -482,8 +595,20 @@ export class VoiceCallWebhookServer {
                 })
               : undefined;
 
+          const bridgeGuidance = this.assistantBridge
+            ? "- For anything you need to know or decide mid-call (availability, preferences, addresses, facts), first tell the other party you need a moment, then use ask_assistant with one specific question. " +
+              `Today's date is ${new Date().toISOString().slice(0, 10)}.\n`
+            : "";
+          const calendarGuidance =
+            this.config.calendar?.enabled && this.config.calendar.icsUrl
+              ? "- When scheduling anything, use check_calendar before agreeing to a time. " +
+                `Today's date is ${new Date().toISOString().slice(0, 10)}. ` +
+                "Share availability as times only; never invent calendar details.\n"
+              : "";
           const toolGuidancePrompt =
             "Call management tools:\n" +
+            bridgeGuidance +
+            calendarGuidance +
             "- If you reach an automated phone menu (IVR) asking you to press keys, use press_phone_keys with the right digits and keep listening.\n" +
             "- Closing sequence, in order: (1) speak the full confirmation of every agreed detail out loud and wait for the other party to acknowledge; " +
             "(2) use report_call_outcome exactly once with the goal status and every concrete fact gathered (times, prices, hours, names, confirmation numbers); " +

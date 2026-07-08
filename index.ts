@@ -9,6 +9,7 @@ import {
   type VoiceCallConfig,
 } from "./src/config.js";
 import type { CoreConfig } from "./src/core-bridge.js";
+import { createAssistantBridge } from "./src/assistant-bridge.js";
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./src/runtime.js";
 
 const voiceCallConfigSchema = {
@@ -199,11 +200,23 @@ const voiceCallPlugin = {
         return runtime;
       }
       if (!runtimePromise) {
+        const subagent = (api.runtime as { subagent?: import("./src/assistant-bridge.js").SubagentRuntime })
+          .subagent;
+        const assistantBridge =
+          config.assistantBridge?.enabled && subagent
+            ? createAssistantBridge({ subagent, timeoutMs: config.assistantBridge.timeoutMs })
+            : undefined;
+        if (config.assistantBridge?.enabled && !subagent) {
+          api.logger.warn(
+            "[voice-call] assistantBridge enabled but this OpenClaw build does not expose runtime.subagent; ask_assistant disabled",
+          );
+        }
         runtimePromise = createVoiceCallRuntime({
           config,
           coreConfig: api.config as CoreConfig,
           ttsRuntime: api.runtime.tts,
           logger: api.logger,
+          assistantBridge,
         });
       }
       try {
