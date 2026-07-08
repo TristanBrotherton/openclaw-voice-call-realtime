@@ -265,7 +265,22 @@ How it behaves on a call: the voice AI says "one moment, let me check", relays o
 
 Security model: the voice AI never gets tool access. Your agent receives the question wrapped in call context — *"live outbound call to +1555…, goal: book a table"* — with instructions to answer in 1–3 speakable sentences and refuse anything private beyond the call's purpose. Your agent's judgment is the boundary.
 
-### Option B: `check_calendar` — direct iCal feed (no agent tooling needed)
+### Option B: `check_calendar` — local command (fastest)
+
+If a local CLI can read your calendar (e.g. [icalBuddy](https://hasseg.org/icalBuddy/) for macOS Calendar), point the tool at it — answers in ~1-2 seconds:
+
+```jsonc
+"calendar": {
+  "enabled": true,
+  "command": "icalBuddy -nc -b '- ' eventsFrom:{start} to:{end}",
+  // privacy: busy-times-only variant used on third-party/unverified calls
+  "commandThirdParty": "icalBuddy -nc -b '- ' -iep datetime eventsFrom:{start} to:{end}"
+}
+```
+
+`{start}`/`{end}` are replaced with YYYY-MM-DD. The command runs on the gateway host with the gateway's permissions, and its output goes to the voice model — so on calls with strangers, `commandThirdParty` should emit busy times only (no titles/locations). `command` takes precedence over `icsUrl` when both are set.
+
+### Option C: `check_calendar` — iCal feed URL (no local tooling needed)
 
 Zero-dependency free/busy from your calendar's secret iCal URL:
 
@@ -344,6 +359,7 @@ Default is `server_vad` (responds after `silenceDurationMs` of silence). `semant
 | `assistantBridge.enabled` | `false` | Give the voice AI an `ask_assistant` tool that relays questions to your OpenClaw agent mid-call |
 | `assistantBridge.trustedNumbers` | `[]` | E.164 numbers treated like the owner for the bridge action policy (family, partner) |
 | `calendar.enabled` + `calendar.icsUrl` | `false` | `check_calendar` free/busy tool from a secret iCal feed (no agent required) |
+| `calendar.command` / `calendar.commandThirdParty` | — | Local command backend for `check_calendar` (~1s); third-party variant for privacy |
 | `postCallReport.enabled` | `false` | Brief your agent automatically when calls end (message you + follow-ups) |
 | `amd.enabled` / `amd.onMachine` | `false` / `leave-message` | Answering-machine detection and voicemail policy |
 | `transfer.enabled` / `transfer.number` | `false` | `transfer_to_owner` tool — hand the call to your real phone |

@@ -1306,6 +1306,14 @@
             "type": "string",
             "format": "uri"
           },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "commandThirdParty": {
+            "type": "string",
+            "minLength": 1
+          },
           "dayStartHour": {
             "default": 8,
             "type": "integer",

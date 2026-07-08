@@ -411,6 +411,30 @@ const voiceCallPlugin = {
     );
 
     api.registerGatewayMethod(
+      "voicecall-tristan.calendar",
+      async ({ params, respond }: GatewayRequestHandlerOptions) => {
+        try {
+          const start = typeof params?.start === "string" ? params.start : "";
+          const end = typeof params?.end === "string" ? params.end : start;
+          if (!start) {
+            respond(false, { error: "start (YYYY-MM-DD) required" });
+            return;
+          }
+          await ensureRuntime();
+          const { resolveAvailability } = await import("./src/calendar.js");
+          const availability = await resolveAvailability(
+            config.calendar as import("./src/calendar.js").CalendarBackendConfig,
+            start,
+            end,
+          );
+          respond(true, { availability });
+        } catch (err) {
+          sendError(respond, err);
+        }
+      },
+    );
+
+    api.registerGatewayMethod(
       "voicecall-tristan.transcript",
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {

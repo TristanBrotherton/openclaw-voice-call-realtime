@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026.7.13
+
+### Changes
+
+- `calendar.command`: local command backend for check_calendar (e.g.
+  icalBuddy on macOS) — availability answers in ~1-2s instead of routing a
+  full agent turn. `calendar.commandThirdParty` runs a privacy-reduced
+  variant (busy times only) on third-party/unverified calls.
+- `voicecall-<id>.calendar` gateway RPC for testing the calendar backend.
+- Greeting is now one combined opening (identity + purpose); narration-style
+  intro messages ("calling you now") are rephrased instead of spoken.
+
 ## 2026.7.12
 
 ### Changes

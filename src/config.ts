@@ -577,6 +577,19 @@ export const VoiceCallConfigSchema = z
         enabled: z.boolean().default(false),
         /** Secret iCal (ICS) feed URL — Google Calendar: Settings → "Secret address in iCal format" */
         icsUrl: z.string().url().optional(),
+        /**
+         * Local command backend (takes precedence over icsUrl). {start} and
+         * {end} are replaced with YYYY-MM-DD. Runs on the gateway host with
+         * the gateway's permissions; output (which may include event titles)
+         * is given to the voice model. Example: "icalBuddy -nc eventsFrom:{start} to:{end}"
+         */
+        command: z.string().min(1).optional(),
+        /**
+         * Command used instead of `command` on third-party/unverified calls.
+         * Point this at a busy-times-only variant so event titles and details
+         * are never in the model's context while talking to strangers.
+         */
+        commandThirdParty: z.string().min(1).optional(),
         /** Local hour the day starts for availability purposes (0-23) */
         dayStartHour: z.number().int().min(0).max(23).default(8),
         /** Local hour the day ends for availability purposes (0-23) */

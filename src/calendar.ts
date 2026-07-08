@@ -9,6 +9,7 @@
  * locations, attendees, and descriptions never reach the model.
  */
 
+import { execFile } from "node:child_process";
 import ical from "node-ical";
 
 export type BusyInterval = { start: Date; end: Date };
@@ -191,4 +192,85 @@ export async function getAvailability(
   const data = await fetchCalendar(config);
   const busy = collectBusyIntervals(data, from, to);
   return describeAvailability(busy, from, to, config.dayStartHour, config.dayEndHour);
+}
+
+/**
+ * Run a user-configured local command for calendar data. {start} and {end}
+ * are replaced with YYYY-MM-DD dates. The command comes from the owner's own
+ * config (same trust level as the credentials stored there); output is
+ * passed to the voice model, so it may include event titles — unlike the ICS
+ * backend, which is strictly free/busy.
+ */
+export function runCalendarCommand(
+  command: string,
+  startDate: string,
+  endDate: string,
+  timeoutMs = 15000,
+): Promise<string> {
+  const cmd = command.replaceAll("{start}", startDate).replaceAll("{end}", endDate);
+  return new Promise((resolve, reject) => {
+    execFile("/bin/sh", ["-c", cmd], { timeout: timeoutMs, maxBuffer: 256 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error(`calendar command failed: ${(stderr || err.message).slice(0, 200)}`));
+        return;
+      }
+      const out = stdout.trim();
+      if (!out) {
+        resolve("No events found in this range.");
+        return;
+      }
+      resolve(out.length > 4000 ? `${out.slice(0, 4000)}…` : out);
+    });
+  });
+}
+
+export type CalendarBackendConfig = {
+  enabled: boolean;
+  command?: string;
+  icsUrl?: string;
+  dayStartHour: number;
+  dayEndHour: number;
+  cacheTtlMs: number;
+};
+
+/** Resolve availability via the configured backend (command wins over ICS). */
+export async function resolveAvailability(
+  config: CalendarBackendConfig,
+  startDate: string,
+  endDate: string,
+): Promise<string> {
+  if (!config.enabled) {
+    throw new Error("calendar is not enabled");
+  }
+  if (config.command) {
+    return runCalendarCommand(config.command, startDate, endDate);
+  }
+  if (config.icsUrl) {
+    return getAvailability(
+      {
+        icsUrl: config.icsUrl,
+        dayStartHour: config.dayStartHour,
+        dayEndHour: config.dayEndHour,
+        cacheTtlMs: config.cacheTtlMs,
+      },
+      startDate,
+      endDate,
+    );
+  }
+  throw new Error("calendar has no backend configured (set command or icsUrl)");
+}
+
+/**
+ * Pick the calendar command for a call party: third-party/unverified calls
+ * use the privacy-reduced variant when configured.
+ */
+export function pickCalendarCommand(
+  config: { command?: string; commandThirdParty?: string },
+  party: string,
+): string | undefined {
+  const restricted = party === "third-party" || party === "unverified";
+  if (restricted && config.commandThirdParty) {
+    return config.commandThirdParty;
+  }
+  return config.command;
 }

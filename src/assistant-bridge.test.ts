@@ -205,3 +205,45 @@ describe("calendar free/busy", () => {
     expect(text.split("\n").length).toBe(2);
   });
 });
+
+describe("calendar command backend", () => {
+  it("substitutes dates and returns bounded output", async () => {
+    const { runCalendarCommand } = await import("./calendar.js");
+    const out = await runCalendarCommand("echo events {start}..{end}", "2026-07-08", "2026-07-15");
+    expect(out).toBe("events 2026-07-08..2026-07-15");
+  });
+
+  it("reports empty output gracefully", async () => {
+    const { runCalendarCommand } = await import("./calendar.js");
+    const out = await runCalendarCommand("true", "2026-07-08", "2026-07-08");
+    expect(out).toBe("No events found in this range.");
+  });
+
+  it("surfaces command failure", async () => {
+    const { runCalendarCommand } = await import("./calendar.js");
+    await expect(
+      runCalendarCommand("echo boom >&2; exit 1", "2026-07-08", "2026-07-08"),
+    ).rejects.toThrow(/calendar command failed: boom/);
+  });
+
+  it("prefers command over ics in resolveAvailability", async () => {
+    const { resolveAvailability } = await import("./calendar.js");
+    const out = await resolveAvailability(
+      { enabled: true, command: "echo CMD", icsUrl: "https://example.com/x.ics", dayStartHour: 8, dayEndHour: 21, cacheTtlMs: 1000 },
+      "2026-07-08", "2026-07-08",
+    );
+    expect(out).toBe("CMD");
+  });
+});
+
+describe("pickCalendarCommand", () => {
+  it("uses the restricted variant for third-party and unverified calls", async () => {
+    const { pickCalendarCommand } = await import("./calendar.js");
+    const cfg = { command: "full", commandThirdParty: "busy-only" };
+    expect(pickCalendarCommand(cfg, "first-party")).toBe("full");
+    expect(pickCalendarCommand(cfg, "trusted-contact")).toBe("full");
+    expect(pickCalendarCommand(cfg, "third-party")).toBe("busy-only");
+    expect(pickCalendarCommand(cfg, "unverified")).toBe("busy-only");
+    expect(pickCalendarCommand({ command: "full" }, "third-party")).toBe("full");
+  });
+});

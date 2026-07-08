@@ -23,7 +23,7 @@ import {
   type RealtimeToolResult,
 } from "./providers/openai-realtime-conversation.js";
 import { generateDtmfMulaw, isValidDtmfSequence } from "./dtmf.js";
-import { getAvailability } from "./calendar.js";
+import { pickCalendarCommand, resolveAvailability } from "./calendar.js";
 import { resolveCallParty } from "./assistant-bridge.js";
 import { createManagedRealtimeConversationSession } from "./providers/managed-realtime-conversation.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
@@ -205,23 +205,26 @@ export class VoiceCallWebhookServer {
 
       case "check_calendar": {
         const cal = this.config.calendar;
-        if (!cal?.enabled || !cal.icsUrl) {
+        if (!cal?.enabled || (!cal.icsUrl && !cal.command)) {
           return "Error: calendar is not configured.";
         }
         const startDate = typeof args.start_date === "string" ? args.start_date : "";
         const endDate = typeof args.end_date === "string" ? args.end_date : startDate;
+        const calCall = this.manager.getCallByProviderCallId(providerCallId);
+        const calParty = resolveCallParty({
+          direction: calCall?.direction,
+          from: calCall?.from,
+          to: calCall?.to,
+          callParty: calCall?.metadata?.callParty,
+          trustedNumbers: this.config.assistantBridge?.trustedNumbers ?? [],
+        });
         try {
-          const availability = await getAvailability(
-            {
-              icsUrl: cal.icsUrl,
-              dayStartHour: cal.dayStartHour,
-              dayEndHour: cal.dayEndHour,
-              cacheTtlMs: cal.cacheTtlMs,
-            },
+          const availability = await resolveAvailability(
+            { ...cal, command: pickCalendarCommand(cal, calParty) },
             startDate,
             endDate,
           );
-          return `Owner's availability:\n${availability}`;
+          return `Owner's calendar for ${startDate}..${endDate}:\n${availability}`;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.warn(`[voice-call] check_calendar failed: ${message}`);
@@ -547,7 +550,8 @@ export class VoiceCallWebhookServer {
               },
             ]
           : []),
-        ...(this.config.calendar?.enabled && this.config.calendar.icsUrl
+        ...(this.config.calendar?.enabled &&
+        (this.config.calendar.icsUrl || this.config.calendar.command)
           ? [
               {
                 name: "check_calendar",
@@ -683,7 +687,8 @@ export class VoiceCallWebhookServer {
               ? "- If the other party genuinely needs the owner in person (payment, authorization, or they insist), use transfer_to_owner — do not attempt those things yourself.\n"
               : "";
           const calendarGuidance =
-            this.config.calendar?.enabled && this.config.calendar.icsUrl
+            this.config.calendar?.enabled &&
+            (this.config.calendar.icsUrl || this.config.calendar.command)
               ? "- When scheduling anything, use check_calendar before agreeing to a time. " +
                 `Today's date is ${new Date().toISOString().slice(0, 10)}. ` +
                 "Share availability as times only; never invent calendar details.\n"
