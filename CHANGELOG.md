@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.7.14
+
+### Changes
+
+- `ask_owner` in-call tool (opt-in via `askOwner.enabled`): mid-call text
+  escalation. The voice AI messages the owner a question through their
+  agent's usual channel and waits (default 2 min) while the caller holds;
+  the owner's reply routes back into the live call via the new
+  answer_call_question tool action. On timeout the AI proceeds
+  conservatively. get_status now surfaces pending questions.
+
 ## 2026.7.13
 
 ### Changes

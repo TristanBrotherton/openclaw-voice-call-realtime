@@ -241,3 +241,41 @@ export function createPostCallReporter(params: {
     }
   };
 }
+
+export type OwnerMessenger = (text: string) => Promise<void>;
+
+/**
+ * Send a message to the owner through their agent's primary direct channel.
+ * The agent only delivers — it must not answer the question itself.
+ */
+export function createOwnerMessenger(params: {
+  subagent: SubagentRuntime;
+  timeoutMs?: number;
+}): OwnerMessenger {
+  const timeoutMs = params.timeoutMs ?? 45000;
+  return async (text: string): Promise<void> => {
+    const sessionKey = `voicecall-msg-${crypto.randomUUID()}`;
+    const { runId } = await params.subagent.run({
+      sessionKey,
+      message:
+        "Send the owner this message RIGHT NOW via your primary direct message channel " +
+        "(iMessage if available, otherwise your usual channel), exactly as written, then " +
+        "reply only 'sent'. Do NOT answer the question in the message yourself — the owner " +
+        "must answer it.\n\nMessage to send:\n" +
+        text,
+      extraSystemPrompt:
+        "You are relaying an urgent question from a live phone call to the owner. " +
+        "Deliver the message immediately and do nothing else.",
+      lightContext: true,
+      deliver: false,
+    });
+    try {
+      const result = await params.subagent.waitForRun({ runId, timeoutMs });
+      if (result.status !== "ok") {
+        throw new Error(result.error || `owner message ${result.status}`);
+      }
+    } finally {
+      void params.subagent.deleteSession({ sessionKey, deleteTranscript: true }).catch(() => {});
+    }
+  };
+}

@@ -9,7 +9,11 @@ import {
   type VoiceCallConfig,
 } from "./src/config.js";
 import type { CoreConfig } from "./src/core-bridge.js";
-import { createAssistantBridge, createPostCallReporter } from "./src/assistant-bridge.js";
+import {
+  createAssistantBridge,
+  createOwnerMessenger,
+  createPostCallReporter,
+} from "./src/assistant-bridge.js";
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./src/runtime.js";
 
 const voiceCallConfigSchema = {
@@ -166,6 +170,13 @@ const VoiceCallToolSchema = Type.Union([
     callId: Type.String({ description: "Call ID (works for ended calls too)" }),
   }),
   Type.Object({
+    action: Type.Literal("answer_call_question"),
+    callId: Type.String({
+      description: "Call ID the question came from (the 📞 message includes its short prefix)",
+    }),
+    answer: Type.String({ description: "The owner's reply, verbatim or summarized faithfully" }),
+  }),
+  Type.Object({
     mode: Type.Optional(Type.Union([Type.Literal("call"), Type.Literal("status")])),
     to: Type.Optional(Type.String({ description: "Call target" })),
     sid: Type.Optional(Type.String({ description: "Call SID" })),
@@ -226,6 +237,13 @@ const voiceCallPlugin = {
           config.postCallReport?.enabled && subagent
             ? createPostCallReporter({ subagent, timeoutMs: config.postCallReport.timeoutMs })
             : undefined;
+        const ownerMessenger =
+          config.askOwner?.enabled && subagent ? createOwnerMessenger({ subagent }) : undefined;
+        if (config.askOwner?.enabled && !subagent) {
+          api.logger.warn(
+            "[voice-call] askOwner enabled but this OpenClaw build does not expose runtime.subagent; ask_owner disabled",
+          );
+        }
         if (config.postCallReport?.enabled && !subagent) {
           api.logger.warn(
             "[voice-call] postCallReport enabled but this OpenClaw build does not expose runtime.subagent; reports disabled",
@@ -238,6 +256,7 @@ const voiceCallPlugin = {
           logger: api.logger,
           assistantBridge,
           postCallReporter,
+          ownerMessenger,
         });
       }
       try {
@@ -492,7 +511,10 @@ const voiceCallPlugin = {
             "do NOT poll get_status or send your own completion report unless asked. "
           : "Poll get_status until the call ends, then use get_transcript to fetch the " +
             "call summary and full transcript to report back. ") +
-        "get_transcript works any time after a call ends.",
+        "get_transcript works any time after a call ends. " +
+        "IMPORTANT: if the owner replies to a relayed live-call question (messages starting " +
+        "with 📞, which include the call id prefix), immediately pass their reply to the call " +
+        "with answer_call_question — do not answer it yourself.",
       parameters: VoiceCallToolSchema,
       async execute(_toolCallId, params) {
         const json = (payload: unknown) => ({
@@ -586,7 +608,27 @@ const voiceCallPlugin = {
                   throw new Error("callId required");
                 }
                 const call = await rt.manager.findCall(callId);
-                return json(call ? { found: true, call } : { found: false });
+                if (!call) {
+                  return json({ found: false });
+                }
+                const pendingQuestion = rt.webhookServer.getPendingOwnerQuestion(call.callId);
+                return json({ found: true, call, ...(pendingQuestion ? { pendingQuestion } : {}) });
+              }
+              case "answer_call_question": {
+                const callId = String(params.callId || "").trim();
+                const answer = String(params.answer || "").trim();
+                if (!callId || !answer) {
+                  throw new Error("callId and answer required");
+                }
+                const resolved = rt.webhookServer.answerOwnerQuestion(callId, answer);
+                return json(
+                  resolved
+                    ? { delivered: true }
+                    : {
+                        delivered: false,
+                        note: "No pending question for that call — it may have timed out or the call ended. The voice AI was told to proceed conservatively.",
+                      },
+                );
               }
               case "get_transcript": {
                 const callId = String(params.callId || "").trim();

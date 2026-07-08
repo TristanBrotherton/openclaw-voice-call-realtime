@@ -497,6 +497,21 @@ export const VoiceCallConfigSchema = z
       .default({ enabled: false, timeoutMs: 120000 }),
 
     /**
+     * Mid-call owner questions: gives the voice AI an ask_owner tool that
+     * messages the owner (via the agent's usual channel, e.g. iMessage) and
+     * waits for their reply while the caller holds. The owner's agent routes
+     * the reply back with the answer_call_question tool action.
+     */
+    askOwner: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** How long to wait for the owner's reply (ms) */
+        timeoutMs: z.number().int().positive().default(120000),
+      })
+      .strict()
+      .default({ enabled: false, timeoutMs: 120000 }),
+
+    /**
      * Mid-call transfer: gives the voice AI a transfer_to_owner tool that
      * announces the handoff, then redirects the call to the owner's real
      * phone. Blind transfer via TwiML <Dial>; the AI leaves the call.

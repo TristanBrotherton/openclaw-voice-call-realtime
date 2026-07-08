@@ -24,6 +24,7 @@ Every "AI agent" can send an email. Almost none of them can call the dry cleaner
   - `end_call` — graceful hangup: speaks a closing line, waits for it to *actually play out* on the line (Twilio mark echo), then disconnects. No clipped goodbyes, no lingering dead air.
   - `ask_assistant` (optional) — the killer feature for scheduling: mid-call, the voice AI relays a question to your OpenClaw agent ("is Wednesday 2pm free?") and speaks the answer. Your agent answers with its full toolset — calendar, search, smart home, anything — so the phone persona stays thin and your agent stays the brain.
   - `check_calendar` (optional) — zero-dependency alternative: free/busy straight from a secret iCal feed URL (Google Calendar, iCloud, Outlook, Fastmail). Only busy windows are exposed — never event titles or details.
+  - `ask_owner` (optional) — mid-call text escalation: the AI messages you ("7pm is taken — is 8pm OK?"), you reply by text, and your answer flows back into the live call while the other party holds. Far lighter than a transfer.
   - `transfer_to_owner` (optional) — when the other party genuinely needs a human (payment details, authorization), the AI announces the handoff and transfers the call to your real phone.
 - **Transcripts & summaries** — every call is finalized into a Markdown transcript with an AI-generated summary and the reported outcome. Retrievable after the call via the `get_transcript` tool action.
 - **Post-call reports** (optional) — when a call ends, your OpenClaw agent is briefed automatically: it messages you the result and performs obvious follow-ups (adds the confirmed booking to your calendar, notes a needed retry). Calls stop being fire-and-forget.
@@ -324,6 +325,14 @@ Uses Twilio's async AMD with `DetectMessageEnd`: the call connects immediately (
 
 The AMD verdict (`answeredBy`) is recorded in call metadata and included in transcripts and post-call reports. Note AMD adds a small Twilio per-call fee.
 
+### Mid-call owner questions (`askOwner`)
+
+```jsonc
+"askOwner": { "enabled": true, "timeoutMs": 120000 }
+```
+
+When the voice AI hits a decision only you can make, it says "let me quickly check", then messages you through your agent's usual channel (e.g. iMessage): *"📞 Live call question (call 38bc6758, with +1555…): 7pm is not available — is 8pm OK? Reply here and I'll relay it."* Your reply routes back through your agent (via the `answer_call_question` tool action — the 📞 prefix and call id teach it where to send the answer) and the AI continues the call with your decision. While waiting it keeps the conversation going naturally; if you don't reply within `timeoutMs`, it proceeds conservatively (tentative acceptance, flagged in the outcome) instead of stalling. Requires the OpenClaw subagent runtime. One question may be pending per call at a time.
+
 ### Mid-call transfer (`transfer`)
 
 ```jsonc
@@ -362,6 +371,7 @@ Default is `server_vad` (responds after `silenceDurationMs` of silence). `semant
 | `calendar.command` / `calendar.commandThirdParty` | — | Local command backend for `check_calendar` (~1s); third-party variant for privacy |
 | `postCallReport.enabled` | `false` | Brief your agent automatically when calls end (message you + follow-ups) |
 | `amd.enabled` / `amd.onMachine` | `false` / `leave-message` | Answering-machine detection and voicemail policy |
+| `askOwner.enabled` | `false` | `ask_owner` tool — text you a question mid-call and relay your reply into the call |
 | `transfer.enabled` / `transfer.number` | `false` | `transfer_to_owner` tool — hand the call to your real phone |
 | `streaming.turnDetection` | `server_vad` | `semantic_vad` for thought-aware turn taking (`vadEagerness` tunes it) |
 | `skipSignatureVerification` | `false` | Leave `false` in production |

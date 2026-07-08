@@ -140,6 +140,7 @@ export async function createVoiceCallRuntime(params: {
   logger?: Logger;
   assistantBridge?: import("./assistant-bridge.js").AssistantBridge;
   postCallReporter?: import("./assistant-bridge.js").PostCallReporter;
+  ownerMessenger?: import("./assistant-bridge.js").OwnerMessenger;
 }): Promise<VoiceCallRuntime> {
   const { config: rawConfig, coreConfig, ttsRuntime, logger } = params;
   const log = logger ?? {
@@ -173,6 +174,7 @@ export async function createVoiceCallRuntime(params: {
   }
   const webhookServer = new VoiceCallWebhookServer(config, manager, provider, coreConfig, {
     assistantBridge: params.assistantBridge,
+    ownerMessenger: params.ownerMessenger,
   });
   const lifecycle = createRuntimeResourceLifecycle({ config, webhookServer });
 

@@ -1111,6 +1111,26 @@
         },
         "additionalProperties": false
       },
+      "askOwner": {
+        "default": {
+          "enabled": false,
+          "timeoutMs": 120000
+        },
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "timeoutMs": {
+            "default": 120000,
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
       "transfer": {
         "default": {
           "enabled": false,

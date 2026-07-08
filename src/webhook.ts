@@ -65,19 +65,30 @@ export class VoiceCallWebhookServer {
   private mediaStreamHandler: MediaStreamHandler | null = null;
   /** Optional bridge for relaying mid-call questions to the owner's agent */
   private assistantBridge: import("./assistant-bridge.js").AssistantBridge | null = null;
+  /** Optional direct-message sender to the owner (for ask_owner) */
+  private ownerMessenger: import("./assistant-bridge.js").OwnerMessenger | null = null;
+  /** Pending ask_owner questions per call, resolved by answer_call_question */
+  private pendingOwnerQuestions = new Map<
+    string,
+    { question: string; askedAt: number; resolve: (answer: string | null) => void; timer: NodeJS.Timeout }
+  >();
 
   constructor(
     config: VoiceCallConfig,
     manager: CallManager,
     provider: VoiceCallProvider,
     coreConfig?: CoreConfig,
-    options?: { assistantBridge?: import("./assistant-bridge.js").AssistantBridge },
+    options?: {
+      assistantBridge?: import("./assistant-bridge.js").AssistantBridge;
+      ownerMessenger?: import("./assistant-bridge.js").OwnerMessenger;
+    },
   ) {
     this.config = config;
     this.manager = manager;
     this.provider = provider;
     this.coreConfig = coreConfig ?? null;
     this.assistantBridge = options?.assistantBridge ?? null;
+    this.ownerMessenger = options?.ownerMessenger ?? null;
 
     // Initialize media stream handler if streaming is enabled
     if (config.streaming?.enabled) {
@@ -98,6 +109,46 @@ export class VoiceCallWebhookServer {
    */
   private loggableText(text: string): string {
     return this.config.logTranscripts ? text : `<redacted, ${text.length} chars>`;
+  }
+
+  /**
+   * Resolve a pending ask_owner question with the owner's reply.
+   * Returns false when no question is pending for the call.
+   */
+  answerOwnerQuestion(callIdOrProviderCallId: string, answer: string): boolean {
+    // Accept either the internal callId or the provider SID.
+    const call =
+      this.manager.getCall(callIdOrProviderCallId) ??
+      this.manager.getCallByProviderCallId(callIdOrProviderCallId);
+    const keys = [
+      callIdOrProviderCallId,
+      call?.callId,
+      call?.providerCallId,
+    ].filter(Boolean) as string[];
+    for (const key of keys) {
+      const pending = this.pendingOwnerQuestions.get(key);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingOwnerQuestions.delete(key);
+        pending.resolve(answer);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Pending ask_owner question for a call, if any (for get_status). */
+  getPendingOwnerQuestion(callIdOrProviderCallId: string): { question: string; askedAt: number } | undefined {
+    const call =
+      this.manager.getCall(callIdOrProviderCallId) ??
+      this.manager.getCallByProviderCallId(callIdOrProviderCallId);
+    for (const key of [callIdOrProviderCallId, call?.callId, call?.providerCallId]) {
+      if (key && this.pendingOwnerQuestions.has(key)) {
+        const p = this.pendingOwnerQuestions.get(key)!;
+        return { question: p.question, askedAt: p.askedAt };
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -163,6 +214,61 @@ export class VoiceCallWebhookServer {
           }
         })();
         return { output: "Transferring now; you will leave the call.", respond: false };
+      }
+
+      case "ask_owner": {
+        if (!this.config.askOwner?.enabled || !this.ownerMessenger) {
+          return "Error: owner messaging is not available on this call.";
+        }
+        const question = typeof args.question === "string" ? args.question.trim() : "";
+        if (!question) {
+          return "Error: question required.";
+        }
+        const ownerCall = this.manager.getCallByProviderCallId(providerCallId);
+        const key = ownerCall?.callId ?? providerCallId;
+        if (this.pendingOwnerQuestions.has(key)) {
+          return "Error: a question to the owner is already pending on this call.";
+        }
+        const shortId = key.slice(0, 8);
+        const counterparty =
+          ownerCall?.direction === "inbound" ? ownerCall.from : (ownerCall?.to ?? "unknown");
+        const timeoutMs = this.config.askOwner.timeoutMs;
+
+        const waitForAnswer = new Promise<string | null>((resolve) => {
+          const timer = setTimeout(() => {
+            this.pendingOwnerQuestions.delete(key);
+            resolve(null);
+          }, timeoutMs);
+          timer.unref?.();
+          this.pendingOwnerQuestions.set(key, { question, askedAt: Date.now(), resolve, timer });
+        });
+
+        try {
+          await this.ownerMessenger(
+            `📞 Live call question (call ${shortId}, with ${counterparty}):\n${question}\n\nReply here and I'll relay it to the call.`,
+          );
+        } catch (err) {
+          const pending = this.pendingOwnerQuestions.get(key);
+          if (pending) {
+            clearTimeout(pending.timer);
+            this.pendingOwnerQuestions.delete(key);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[voice-call] ask_owner send failed: ${message}`);
+          return `Error: could not reach the owner (${message}). Use your judgment and note it in the outcome.`;
+        }
+
+        console.log(`[voice-call] ask_owner pending on ${key}: ${this.loggableText(question)}`);
+        const answer = await waitForAnswer;
+        if (answer === null) {
+          return (
+            "The owner has not replied yet. Proceed conservatively: accept a reasonable " +
+            "option tentatively and say the owner will confirm, or offer to call back. " +
+            "Record what happened via report_call_outcome."
+          );
+        }
+        console.log(`[voice-call] ask_owner answered on ${key} (${answer.length} chars)`);
+        return `Owner replied: ${answer}`;
       }
 
       case "ask_assistant": {
@@ -277,6 +383,20 @@ export class VoiceCallWebhookServer {
    * sent to Twilio has actually played out (Twilio mark echo), so the goodbye
    * is not cut off mid-sentence.
    */
+  private rejectPendingOwnerQuestion(callIdOrProviderCallId: string): void {
+    const call =
+      this.manager.getCall(callIdOrProviderCallId) ??
+      this.manager.getCallByProviderCallId(callIdOrProviderCallId);
+    for (const key of [callIdOrProviderCallId, call?.callId, call?.providerCallId]) {
+      const pending = key ? this.pendingOwnerQuestions.get(key) : undefined;
+      if (pending && key) {
+        clearTimeout(pending.timer);
+        this.pendingOwnerQuestions.delete(key);
+        pending.resolve(null);
+      }
+    }
+  }
+
   private async gracefulEndCall(
     session: import("./providers/managed-realtime-conversation.js").ManagedRealtimeConversationSession,
     providerCallId: string,
@@ -437,6 +557,7 @@ export class VoiceCallWebhookServer {
       },
       onDisconnect: (callId: string) => {
         console.log(`[voice-call] Media stream disconnected: ${callId}`);
+        this.rejectPendingOwnerQuestion(callId);
         const disconnectedCall = this.manager.getCallByProviderCallId(callId);
         if (disconnectedCall) {
           console.log(
@@ -521,6 +642,31 @@ export class VoiceCallWebhookServer {
                     },
                   },
                   required: ["reason"],
+                },
+              },
+            ]
+          : []),
+        ...(this.config.askOwner?.enabled && this.ownerMessenger
+          ? [
+              {
+                name: "ask_owner",
+                description:
+                  "Send the owner a text message with a question and wait for their " +
+                  "reply (up to ~2 minutes) while staying on the call. Use for " +
+                  "decisions only the owner can make, e.g. accepting an alternative " +
+                  "time. Tell the other party you are checking BEFORE calling this, " +
+                  "and keep the conversation going naturally while you wait.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    question: {
+                      type: "string",
+                      description:
+                        "Short, self-contained question with the key context, e.g. " +
+                        "'7pm is not available — is 8pm OK instead?'",
+                    },
+                  },
+                  required: ["question"],
                 },
               },
             ]
@@ -682,6 +828,10 @@ export class VoiceCallWebhookServer {
             ? "- For anything you need to know or decide mid-call (availability, preferences, addresses, facts), FIRST tell the other party this may take up to a minute, then use ask_assistant with one specific question. " +
               `Today's date is ${new Date().toISOString().slice(0, 10)}.\n`
             : "";
+          const askOwnerGuidance =
+            this.config.askOwner?.enabled && this.ownerMessenger
+              ? "- For decisions only the owner can make (accepting an alternative time, spending money), say you'll quickly check with them, then use ask_owner. They reply by text within a couple of minutes; keep chatting naturally while you wait.\n"
+              : "";
           const transferGuidance =
             this.config.transfer?.enabled && (this.config.transfer.number || this.config.toNumber)
               ? "- If the other party genuinely needs the owner in person (payment, authorization, or they insist), use transfer_to_owner — do not attempt those things yourself.\n"
@@ -697,6 +847,7 @@ export class VoiceCallWebhookServer {
             "Call management tools:\n" +
             bridgeGuidance +
             calendarGuidance +
+            askOwnerGuidance +
             transferGuidance +
             "- If you reach an automated phone menu (IVR) asking you to press keys, use press_phone_keys with the right digits and keep listening.\n" +
             "- Closing sequence, in order: (1) speak the full confirmation of every agreed detail out loud and wait for the other party to acknowledge; " +
