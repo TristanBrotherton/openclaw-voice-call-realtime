@@ -113,6 +113,46 @@ describe("bridge action policy", () => {
   });
 });
 
+describe("resolveCallParty / trusted numbers", () => {
+  it("marks allowlisted counterparties as trusted (outbound uses `to`)", async () => {
+    const { resolveCallParty } = await import("./assistant-bridge.js");
+    expect(
+      resolveCallParty({
+        direction: "outbound",
+        to: "+15550003333",
+        callParty: "third-party",
+        trustedNumbers: ["+15550003333"],
+      }),
+    ).toBe("trusted-contact");
+  });
+
+  it("uses `from` for inbound calls and falls back to declared party", async () => {
+    const { resolveCallParty } = await import("./assistant-bridge.js");
+    expect(
+      resolveCallParty({
+        direction: "inbound",
+        from: "+15550004444",
+        trustedNumbers: ["+15550003333"],
+      }),
+    ).toBe("unverified");
+    expect(
+      resolveCallParty({
+        direction: "inbound",
+        from: "+15550003333",
+        trustedNumbers: ["+15550003333"],
+      }),
+    ).toBe("trusted-contact");
+  });
+
+  it("trusted tier permits actions with attribution", async () => {
+    const { buildBridgeSystemPrompt } = await import("./assistant-bridge.js");
+    const prompt = buildBridgeSystemPrompt("inbound call from +15550003333, party: trusted-contact");
+    expect(prompt).toContain("trusted list");
+    expect(prompt).toContain("requested by this");
+    expect(prompt).not.toContain("do NOT perform any state-changing action");
+  });
+});
+
 describe("calendar free/busy", () => {
   it("merges overlapping busy intervals", () => {
     const merged = mergeIntervals([

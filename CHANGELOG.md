@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.7.10
+
+### Changes
+
+- `assistantBridge.trustedNumbers`: allowlist of E.164 numbers treated like
+  the owner for the bridge action policy. Trusted contacts can ask the agent
+  to perform actions (attributed to them); all other third parties remain
+  questions-only.
+
 ## 2026.7.9
 
 ### Changes

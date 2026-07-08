@@ -503,9 +503,16 @@ export const VoiceCallConfigSchema = z
         enabled: z.boolean().default(false),
         /** Max time to wait for the agent's answer (ms) */
         timeoutMs: z.number().int().positive().default(45000),
+        /**
+         * Trusted phone numbers (E.164). Calls with these numbers are treated
+         * like the owner for the bridge action policy: the agent may perform
+         * requested actions using its normal judgment. All other third
+         * parties are questions-only.
+         */
+        trustedNumbers: z.array(E164Schema).default([]),
       })
       .strict()
-      .default({ enabled: false, timeoutMs: 45000 }),
+      .default({ enabled: false, timeoutMs: 45000, trustedNumbers: [] }),
 
     calendar: z
       .object({

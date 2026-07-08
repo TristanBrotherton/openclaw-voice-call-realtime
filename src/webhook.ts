@@ -24,6 +24,7 @@ import {
 } from "./providers/openai-realtime-conversation.js";
 import { generateDtmfMulaw, isValidDtmfSequence } from "./dtmf.js";
 import { getAvailability } from "./calendar.js";
+import { resolveCallParty } from "./assistant-bridge.js";
 import { createManagedRealtimeConversationSession } from "./providers/managed-realtime-conversation.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
 import type { TwilioProvider } from "./providers/twilio.js";
@@ -127,9 +128,16 @@ export class VoiceCallWebhookServer {
           return "Error: question required.";
         }
         const call = this.manager.getCallByProviderCallId(providerCallId);
+        const party = resolveCallParty({
+          direction: call?.direction,
+          from: call?.from,
+          to: call?.to,
+          callParty: call?.metadata?.callParty,
+          trustedNumbers: this.config.assistantBridge?.trustedNumbers ?? [],
+        });
         const context = [
           call?.direction === "inbound" ? `inbound call from ${call.from}` : `outbound call to ${call?.to ?? "unknown"}`,
-          call?.metadata?.callParty ? `party: ${call.metadata.callParty}` : undefined,
+          `party: ${party}`,
           Array.isArray(call?.metadata?.talkingPoints)
             ? `goal: ${(call.metadata.talkingPoints as string[]).join("; ")}`
             : undefined,

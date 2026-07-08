@@ -298,6 +298,7 @@ The plugin fetches the feed, expands recurring events, and answers with per-day 
 | `summaryModel` | `gpt-4o-mini` | Chat model for end-of-call summaries |
 | `logTranscripts` | `false` | Log call content to gateway logs (off by default — calls contain personal data) |
 | `assistantBridge.enabled` | `false` | Give the voice AI an `ask_assistant` tool that relays questions to your OpenClaw agent mid-call |
+| `assistantBridge.trustedNumbers` | `[]` | E.164 numbers treated like the owner for the bridge action policy (family, partner) |
 | `calendar.enabled` + `calendar.icsUrl` | `false` | `check_calendar` free/busy tool from a secret iCal feed (no agent required) |
 | `skipSignatureVerification` | `false` | Leave `false` in production |
 | `deviceProfiles` | `[]` | Per-caller response length / forbidden actions / instructions |
@@ -309,7 +310,7 @@ The plugin fetches the feed, expands recurring events, and answers with per-day 
 - **Inbound is off by default.** If you enable it, use `allowlist`.
 - The voice AI's default tools are call-control only (hang up, record outcome, press keys) — it cannot touch your machine, files, or other OpenClaw tools from inside a call.
 - If you enable `assistantBridge`, your OpenClaw agent becomes the security boundary: every relayed question arrives marked as coming from a live call (with the caller's number and goal), and the agent is instructed to refuse anything private beyond the call's purpose. The voice AI never gets direct tool access — only the agent's spoken-word answers.
-- The bridge enforces a **call-party action policy**: on `third-party` calls (and any call whose party is unverified), the agent is instructed to answer questions only and refuse all state-changing actions (smart home, messages, purchases) no matter how the request is phrased. Only `first-party` calls — the owner on the line — permit actions, under the agent's normal judgment and approval rules.
+- The bridge enforces a **call-party action policy**: on `third-party` calls (and any call whose party is unverified), the agent is instructed to answer questions only and refuse all state-changing actions (smart home, messages, purchases) no matter how the request is phrased. `first-party` calls — the owner on the line — permit actions under the agent's normal judgment and approval rules, as do calls with numbers on `assistantBridge.trustedNumbers` (actions are attributed to that contact, not the owner). Note the trust signal is caller ID, which can be spoofed — keep genuinely dangerous actions behind your agent's own approval rules.
 - On third-party calls the AI is instructed not to volunteer private information beyond the call goal; add hard rules via `deviceProfiles[].forbiddenActions`.
 - Your Twilio auth token and OpenAI key live in your OpenClaw config — keep its permissions tight (`chmod 600`).
 - **Call content stays out of your logs by default.** Transcripts, partials, AI responses, and DTMF digits are logged as redacted lengths unless you opt in with `logTranscripts: true`. Transcript *files* (for `get_transcript`) are always written — they live in your call store, not the shared gateway log.
