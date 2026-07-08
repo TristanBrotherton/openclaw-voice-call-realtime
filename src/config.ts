@@ -497,6 +497,37 @@ export const VoiceCallConfigSchema = z
     callScreening: CallScreeningConfigSchema,
 
     /**
+     * Direct Home Assistant backend for in-call home status/control. Gives
+     * verified owner/trusted calls fast check_home (and, with allowControl,
+     * control_home) tools that hit HA's REST API directly (~1-2s) instead of
+     * routing through the agent bridge. Never offered to third-party or
+     * unverified callers. baseUrl/token fall back to HA_BASE_URL / HA_TOKEN.
+     */
+    homeAssistant: z
+      .object({
+        enabled: z.boolean().default(false),
+        baseUrl: z.string().url().optional(),
+        token: z.string().min(1).optional(),
+        /** Entity domains the tools may read/control. */
+        exposeDomains: z
+          .array(z.string().min(1))
+          .default(["lock", "cover", "light", "switch", "climate", "fan", "binary_sensor"]),
+        /** Allow control_home service calls (off = status only). */
+        allowControl: z.boolean().default(false),
+        /** Max entities returned by a status query. */
+        maxResults: z.number().int().positive().default(40),
+        timeoutMs: z.number().int().positive().default(10000),
+      })
+      .strict()
+      .default({
+        enabled: false,
+        exposeDomains: ["lock", "cover", "light", "switch", "climate", "fan", "binary_sensor"],
+        allowControl: false,
+        maxResults: 40,
+        timeoutMs: 10000,
+      }),
+
+    /**
      * Answering machine detection (Twilio async AMD) for outbound calls.
      * onMachine: leave-message (default) instructs the voice AI to leave a
      * concise voicemail after the beep; hangup ends the call; continue

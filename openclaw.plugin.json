@@ -1095,6 +1095,71 @@
         },
         "additionalProperties": false
       },
+      "homeAssistant": {
+        "default": {
+          "enabled": false,
+          "exposeDomains": [
+            "lock",
+            "cover",
+            "light",
+            "switch",
+            "climate",
+            "fan",
+            "binary_sensor"
+          ],
+          "allowControl": false,
+          "maxResults": 40,
+          "timeoutMs": 10000
+        },
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "baseUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "exposeDomains": {
+            "default": [
+              "lock",
+              "cover",
+              "light",
+              "switch",
+              "climate",
+              "fan",
+              "binary_sensor"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "allowControl": {
+            "default": false,
+            "type": "boolean"
+          },
+          "maxResults": {
+            "default": 40,
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "timeoutMs": {
+            "default": 10000,
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
       "amd": {
         "default": {
           "enabled": false,

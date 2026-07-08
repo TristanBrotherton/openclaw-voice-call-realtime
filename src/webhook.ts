@@ -24,6 +24,12 @@ import {
 } from "./providers/openai-realtime-conversation.js";
 import { generateDtmfMulaw, isValidDtmfSequence } from "./dtmf.js";
 import { pickCalendarCommand, resolveAvailability } from "./calendar.js";
+import {
+  controlHomeEntity,
+  queryHomeStates,
+  HA_COMMANDS,
+  type HomeAssistantConfig,
+} from "./home-assistant.js";
 import { resolveCallParty } from "./assistant-bridge.js";
 import { createManagedRealtimeConversationSession } from "./providers/managed-realtime-conversation.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
@@ -109,6 +115,27 @@ export class VoiceCallWebhookServer {
    */
   private loggableText(text: string): string {
     return this.config.logTranscripts ? text : `<redacted, ${text.length} chars>`;
+  }
+
+  /** Resolve the effective Home Assistant config (env fallback), or null if unusable. */
+  private resolveHomeAssistantConfig(): HomeAssistantConfig | null {
+    const ha = this.config.homeAssistant;
+    if (!ha?.enabled) {
+      return null;
+    }
+    const baseUrl = ha.baseUrl || process.env.HA_BASE_URL;
+    const token = ha.token || process.env.HA_TOKEN;
+    if (!baseUrl || !token) {
+      return null;
+    }
+    return {
+      baseUrl,
+      token,
+      exposeDomains: ha.exposeDomains,
+      allowControl: ha.allowControl,
+      maxResults: ha.maxResults,
+      timeoutMs: ha.timeoutMs,
+    };
   }
 
   /** Centralized trust-tier resolution for a call (see resolveCallParty). */
@@ -350,6 +377,51 @@ export class VoiceCallWebhookServer {
             "Do not repeat this. Record the open item with report_call_outcome so it is " +
             "followed up after the call."
           );
+        }
+      }
+
+      case "check_home": {
+        const haConfig = this.resolveHomeAssistantConfig();
+        const haCall = this.manager.getCallByProviderCallId(providerCallId);
+        const haParty = this.resolvePartyForCall(haCall);
+        const verified = haParty === "first-party" || haParty === "trusted-contact";
+        if (!haConfig || !verified) {
+          return "Error: home status is not available on this call.";
+        }
+        try {
+          const query = typeof args.query === "string" ? args.query : undefined;
+          const summary = await queryHomeStates(haConfig, query);
+          return `Home status:\n${summary}`;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[voice-call] check_home failed: ${message}`);
+          return "I couldn't reach the home system right now (internal — don't read this aloud). Tell them naturally you can't check that this moment.";
+        }
+      }
+
+      case "control_home": {
+        const haConfig = this.resolveHomeAssistantConfig();
+        const hcCall = this.manager.getCallByProviderCallId(providerCallId);
+        const hcParty = this.resolvePartyForCall(hcCall);
+        const verified = hcParty === "first-party" || hcParty === "trusted-contact";
+        if (!haConfig || !haConfig.allowControl || !verified) {
+          return "Error: home control is not available on this call.";
+        }
+        const entityId = typeof args.entity_id === "string" ? args.entity_id.trim() : "";
+        const command = typeof args.command === "string" ? args.command.trim() : "";
+        if (!entityId || !command) {
+          return "Error: entity_id and command required.";
+        }
+        try {
+          const result = await controlHomeEntity(haConfig, entityId, command);
+          console.log(
+            `[voice-call] control_home ${command} ${entityId} on ${providerCallId}: ${result.ok ? "ok" : "denied"}`,
+          );
+          return result.ok ? `Done — ${result.message}` : `Error: ${result.message}`;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[voice-call] control_home failed: ${message}`);
+          return "That didn't go through (internal — don't read this aloud). Tell them naturally it didn't work and you'll sort it out.";
         }
       }
 
@@ -762,6 +834,54 @@ export class VoiceCallWebhookServer {
               },
             ]
           : []),
+        ...(this.resolveHomeAssistantConfig()
+          ? [
+              {
+                name: "check_home",
+                description:
+                  "Check the state of the owner's home devices (locks, doors, lights, " +
+                  "covers, climate, switches) — e.g. 'are the doors locked?'. Responds " +
+                  "in about a second. Pass a query to filter (e.g. 'front door', " +
+                  "'lights'); omit it to list exposed devices. Owner/trusted calls only.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    query: {
+                      type: "string",
+                      description: "Optional filter on device name (e.g. 'garage', 'kitchen light').",
+                    },
+                  },
+                  required: [],
+                },
+              },
+              ...(this.config.homeAssistant?.allowControl
+                ? [
+                    {
+                      name: "control_home",
+                      description:
+                        "Control one of the owner's home devices. First use check_home " +
+                        "to get the exact entity_id, then call this with that entity_id " +
+                        `and a command (${HA_COMMANDS.join(", ")}). Owner/trusted calls only.`,
+                      parameters: {
+                        type: "object",
+                        properties: {
+                          entity_id: {
+                            type: "string",
+                            description: "Exact entity_id from check_home, e.g. 'lock.front_door'.",
+                          },
+                          command: {
+                            type: "string",
+                            enum: HA_COMMANDS,
+                            description: "What to do.",
+                          },
+                        },
+                        required: ["entity_id", "command"],
+                      },
+                    },
+                  ]
+                : []),
+            ]
+          : []),
         ...(this.config.calendar?.enabled &&
         (this.config.calendar.icsUrl || this.config.calendar.command)
           ? [
@@ -920,6 +1040,13 @@ export class VoiceCallWebhookServer {
             this.config.transfer?.enabled && (this.config.transfer.number || this.config.toNumber)
               ? "- If the other party genuinely needs the owner in person (payment, authorization, or they insist), use transfer_to_owner — do not attempt those things yourself.\n"
               : "";
+          const homeGuidance = this.resolveHomeAssistantConfig()
+            ? "- For the owner's home (locks, doors, lights, covers, climate), use check_home to read status" +
+              (this.config.homeAssistant?.allowControl
+                ? " and control_home to change it (get the entity_id from check_home first)"
+                : "") +
+              " — it responds in about a second.\n"
+            : "";
           const calendarEnabled =
             this.config.calendar?.enabled &&
             (this.config.calendar.icsUrl || this.config.calendar.command);
@@ -931,6 +1058,7 @@ export class VoiceCallWebhookServer {
           const toolGuidancePrompt =
             "Call management tools:\n" +
             bridgeGuidance +
+            homeGuidance +
             calendarGuidance +
             askOwnerGuidance +
             transferGuidance +

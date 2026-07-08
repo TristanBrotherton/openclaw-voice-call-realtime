@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.7.19
+
+### Changes
+
+- Direct Home Assistant backend (`homeAssistant`): check_home reads device
+  status in ~1s (vs tens of seconds via the agent bridge); control_home
+  (opt-in via allowControl) performs a bounded command set (on/off/toggle/
+  lock/unlock/open/close) on one entity. Both tools are offered only on
+  verified owner/trusted calls; never to third-party/unverified. baseUrl/
+  token fall back to HA_BASE_URL / HA_TOKEN. allowControl defaults off.
+
 ## 2026.7.18
 
 ### Changes

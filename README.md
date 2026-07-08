@@ -24,6 +24,7 @@ Every "AI agent" can send an email. Almost none of them can call the dry cleaner
   - `end_call` — graceful hangup: speaks a closing line, waits for it to *actually play out* on the line (Twilio mark echo), then disconnects. No clipped goodbyes, no lingering dead air.
   - `ask_assistant` (optional) — the killer feature for scheduling: mid-call, the voice AI relays a question to your OpenClaw agent ("is Wednesday 2pm free?") and speaks the answer. Your agent answers with its full toolset — calendar, search, smart home, anything — so the phone persona stays thin and your agent stays the brain.
   - `check_calendar` (optional) — zero-dependency alternative: free/busy straight from a secret iCal feed URL (Google Calendar, iCloud, Outlook, Fastmail). Only busy windows are exposed — never event titles or details.
+  - `check_home` / `control_home` (optional) — direct Home Assistant backend: read device status ("are the doors locked?") and, when enabled, control devices ("turn off the porch light") in ~1 second, bypassing the agent. Offered only on verified owner/trusted calls.
   - `ask_owner` (optional) — mid-call text escalation: the AI messages you ("7pm is taken — is 8pm OK?"), you reply by text, and your answer flows back into the live call while the other party holds. Far lighter than a transfer.
   - `transfer_to_owner` (optional) — when the other party genuinely needs a human (payment details, authorization), the AI announces the handoff and transfers the call to your real phone.
 - **Transcripts & summaries** — every call is finalized into a Markdown transcript with an AI-generated summary and the reported outcome. Retrievable after the call via the `get_transcript` tool action.
@@ -339,6 +340,27 @@ On a call verified as the owner or a trusted contact, the voice AI can do more t
 
 **The security model, by design:** the phone-facing voice model has **no tools of its own** — it can only relay to your OpenClaw agent, which is the sole executor and boundary. Full action capability is granted **only** on calls verified through SHAKEN/STIR attestation or your spoken passphrase — never through spoofable caller ID — and third-party/unverified calls are *always* questions-only no matter what `ownerActions` is set to. Everything the agent does on a call is logged and included in the post-call report.
 
+## Home Assistant (`homeAssistant`)
+
+A direct backend for in-call home status and control — the same "bypass the agent for speed" trick as the calendar command, for smart homes. Reads run in ~1 second; without it, home questions route through the agent bridge (tens of seconds).
+
+```jsonc
+"homeAssistant": {
+  "enabled": true,
+  // baseUrl / token fall back to HA_BASE_URL / HA_TOKEN env vars if omitted
+  "baseUrl": "https://homeassistant.local:8123",
+  "token": "<long-lived access token>",
+  "exposeDomains": ["lock", "cover", "light", "switch", "climate", "fan", "binary_sensor"],
+  "allowControl": false,   // false = status only; true adds control_home
+  "maxResults": 40
+}
+```
+
+- **`check_home`** reads entity states (filtered to `exposeDomains`, optionally by a name query) and returns a readable summary.
+- **`control_home`** (only when `allowControl: true`) performs a bounded action — `on`, `off`, `toggle`, `lock`, `unlock`, `open`, `close` — on one entity the AI got from `check_home`. Only those mapped commands are possible; arbitrary service calls, scripts, and automations are not reachable through this tool.
+
+**Security:** both tools are offered **only** on calls verified as the owner or a trusted contact (SHAKEN/STIR attestation or passphrase — never spoofable caller ID); third-party and unverified callers never see them. `allowControl` defaults to **off**, so the public default is read-only. The token lives in config/env and is never placed in the model prompt. Create a Home Assistant long-lived access token under your HA profile; scope it to a dedicated user if you want to limit what the token can see. This backend talks to HA directly (not through your OpenClaw agent), so it is bounded by `exposeDomains` and the fixed command set rather than by the agent's action policy — keep `exposeDomains` to what you actually need.
+
 ## Post-call reports, voicemail handling, transfer & turn detection
 
 ### Post-call reports (`postCallReport`)
@@ -411,6 +433,7 @@ Default is `server_vad` (responds after `silenceDurationMs` of silence). `semant
 | `assistantBridge.ownerActions` | `confirm-sensitive` | What the agent may DO on verified calls: `off` / `confirm-sensitive` / `full` |
 | `calendar.enabled` + `calendar.icsUrl` | `false` | `check_calendar` free/busy tool from a secret iCal feed (no agent required) |
 | `calendar.command` / `calendar.commandThirdParty` | — | Local command backend for `check_calendar` (~1s); third-party variant for privacy |
+| `homeAssistant.enabled` / `.allowControl` | `false` / `false` | Direct HA `check_home` (status) and `control_home` (opt-in) on verified calls |
 | `postCallReport.enabled` | `false` | Brief your agent automatically when calls end (message you + follow-ups) |
 | `amd.enabled` / `amd.onMachine` | `false` / `leave-message` | Answering-machine detection and voicemail policy |
 | `askOwner.enabled` | `false` | `ask_owner` tool — text you a question mid-call and relay your reply into the call |
