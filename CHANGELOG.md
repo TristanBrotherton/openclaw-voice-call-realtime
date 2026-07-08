@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026.7.16
+
+### Changes
+
+- Inbound caller verification: number-based trust tiers now require
+  SHAKEN/STIR attestation A (`inboundSecurity.trustStirA`, default on) since
+  caller ID is spoofable; optional spoken `passphrase` verified via the new
+  verify_passphrase tool (never placed in the prompt) upgrades a caller to
+  owner for the call. Trust context injected into inbound call prompts.
+- Ending etiquette: goodbye lives ONLY in end_call final_message (no spoken
+  wrap-up first), never say "the owner" aloud, follow-up status stated at
+  most once, ask_assistant fallback wording adapts to who is on the call.
+
 ## 2026.7.15
 
 ### Changes

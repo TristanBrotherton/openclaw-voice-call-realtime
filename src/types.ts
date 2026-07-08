@@ -85,6 +85,8 @@ const BaseEventSchema = z.object({
   direction: z.enum(["inbound", "outbound"]).optional(),
   from: z.string().optional(),
   to: z.string().optional(),
+  /** SHAKEN/STIR verification status (Twilio StirVerstat), e.g. TN-Validation-Passed-A */
+  stirVerstat: z.string().optional(),
 });
 
 export const NormalizedEventSchema = z.discriminatedUnion("type", [

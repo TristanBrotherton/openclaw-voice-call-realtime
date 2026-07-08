@@ -318,6 +318,7 @@ export class TwilioProvider implements VoiceCallProvider {
       direction: TwilioProvider.parseDirection(params.get("Direction")),
       from: params.get("From") || undefined,
       to: params.get("To") || undefined,
+      stirVerstat: params.get("StirVerstat") || undefined,
     };
 
     // Handle speech result (from <Gather>)

@@ -273,6 +273,23 @@
       "inboundGreeting": {
         "type": "string"
       },
+      "inboundSecurity": {
+        "default": {
+          "trustStirA": true
+        },
+        "type": "object",
+        "properties": {
+          "trustStirA": {
+            "default": true,
+            "type": "boolean"
+          },
+          "passphrase": {
+            "type": "string",
+            "minLength": 4
+          }
+        },
+        "additionalProperties": false
+      },
       "outbound": {
         "default": {
           "defaultMode": "notify",

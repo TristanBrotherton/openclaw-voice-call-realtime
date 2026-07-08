@@ -111,6 +111,26 @@ export class VoiceCallWebhookServer {
     return this.config.logTranscripts ? text : `<redacted, ${text.length} chars>`;
   }
 
+  /** Centralized trust-tier resolution for a call (see resolveCallParty). */
+  private resolvePartyForCall(
+    call?: import("./types.js").CallRecord,
+  ): "first-party" | "trusted-contact" | "third-party" | "unverified" {
+    return resolveCallParty({
+      direction: call?.direction,
+      from: call?.from,
+      to: call?.to,
+      callParty: call?.metadata?.callParty,
+      trustedNumbers: this.config.assistantBridge?.trustedNumbers ?? [],
+      ownerNumbers: [this.config.toNumber, this.config.transfer?.number].filter(
+        Boolean,
+      ) as string[],
+      verifiedOwner: call?.metadata?.verifiedOwner === true,
+      stirVerstat:
+        typeof call?.metadata?.stirVerstat === "string" ? call.metadata.stirVerstat : undefined,
+      trustStirA: this.config.inboundSecurity?.trustStirA ?? true,
+    });
+  }
+
   /**
    * Resolve a pending ask_owner question with the owner's reply.
    * Returns false when no question is pending for the call.
@@ -168,6 +188,26 @@ export class VoiceCallWebhookServer {
         return recorded
           ? "Outcome recorded for the owner."
           : "Could not find the active call to record against.";
+      }
+
+      case "verify_passphrase": {
+        const expected = this.config.inboundSecurity?.passphrase;
+        if (!expected) {
+          return "Error: no passphrase is configured.";
+        }
+        const normalize = (s: string) =>
+          s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const spoken = typeof args.phrase === "string" ? args.phrase : "";
+        const vCall = this.manager.getCallByProviderCallId(providerCallId);
+        if (normalize(spoken) === normalize(expected)) {
+          if (vCall) {
+            vCall.metadata = { ...(vCall.metadata ?? {}), verifiedOwner: true };
+            console.log(`[voice-call] Caller verified via passphrase on ${vCall.callId}`);
+          }
+          return "Verified. Treat the caller as the owner for the rest of this call.";
+        }
+        console.log(`[voice-call] Passphrase check FAILED on ${vCall?.callId ?? providerCallId}`);
+        return "Not verified. Do not grant owner-level access. You may allow one more attempt, then continue treating them as an unverified caller.";
       }
 
       case "transfer_to_owner": {
@@ -280,13 +320,7 @@ export class VoiceCallWebhookServer {
           return "Error: question required.";
         }
         const call = this.manager.getCallByProviderCallId(providerCallId);
-        const party = resolveCallParty({
-          direction: call?.direction,
-          from: call?.from,
-          to: call?.to,
-          callParty: call?.metadata?.callParty,
-          trustedNumbers: this.config.assistantBridge?.trustedNumbers ?? [],
-        });
+        const party = this.resolvePartyForCall(call);
         const context = [
           call?.direction === "inbound" ? `inbound call from ${call.from}` : `outbound call to ${call?.to ?? "unknown"}`,
           `party: ${party}`,
@@ -305,11 +339,16 @@ export class VoiceCallWebhookServer {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.warn(`[voice-call] ask_assistant failed: ${message}`);
+          const askIsOwner = party === "first-party" || party === "trusted-contact";
           return (
             "The answer is not available right now (internal — do not read this aloud). " +
-            "Tell the other party naturally that you can't get to it at the moment and " +
-            "that the owner will get the answer by text shortly. Record the open item " +
-            "with report_call_outcome so it is followed up after the call."
+            (askIsOwner
+              ? "Tell them naturally, ONCE, that you can't get to it this moment and " +
+                "you'll text them the answer shortly. "
+              : "Tell them naturally, ONCE, that you can't get to it this moment and " +
+                "someone will follow up. ") +
+            "Do not repeat this. Record the open item with report_call_outcome so it is " +
+            "followed up after the call."
           );
         }
       }
@@ -322,13 +361,7 @@ export class VoiceCallWebhookServer {
         const startDate = typeof args.start_date === "string" ? args.start_date : "";
         const endDate = typeof args.end_date === "string" ? args.end_date : startDate;
         const calCall = this.manager.getCallByProviderCallId(providerCallId);
-        const calParty = resolveCallParty({
-          direction: calCall?.direction,
-          from: calCall?.from,
-          to: calCall?.to,
-          callParty: calCall?.metadata?.callParty,
-          trustedNumbers: this.config.assistantBridge?.trustedNumbers ?? [],
-        });
+        const calParty = this.resolvePartyForCall(calCall);
         try {
           const availability = await resolveAvailability(
             { ...cal, command: pickCalendarCommand(cal, calParty) },
@@ -582,11 +615,12 @@ export class VoiceCallWebhookServer {
           name: "end_call",
           description:
             "Hang up the phone call. Only use this after you have spoken every " +
-            "detail out loud and the other party has acknowledged. Always provide " +
-            "final_message with your closing sentence — it is spoken aloud and " +
-            "played out fully before the line disconnects. Any confirmation you " +
-            "have not already said out loud will NOT be heard unless it is in " +
-            "final_message.",
+            "detail out loud and the other party has acknowledged. Provide " +
+            "final_message with your ENTIRE goodbye — it is spoken aloud and " +
+            "played out fully before the line disconnects. Do not say a goodbye " +
+            "or wrap-up sentence yourself before calling this; final_message " +
+            "replaces it. Anything not already said aloud (or in final_message) " +
+            "will never be heard.",
           parameters: {
             type: "object",
             properties: {
@@ -647,6 +681,30 @@ export class VoiceCallWebhookServer {
                     },
                   },
                   required: ["reason"],
+                },
+              },
+            ]
+          : []),
+        ...(this.config.inboundSecurity?.passphrase
+          ? [
+              {
+                name: "verify_passphrase",
+                description:
+                  "Check the caller's spoken access phrase. Use when an inbound " +
+                  "caller wants owner-level help (personal info, actions) but their " +
+                  "identity is not yet verified: ask them for the access phrase, " +
+                  "then call this with what they said. Never reveal or hint at the " +
+                  "phrase yourself, and never say whether individual words were " +
+                  "close. Allow two attempts at most.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    phrase: {
+                      type: "string",
+                      description: "The access phrase exactly as the caller spoke it.",
+                    },
+                  },
+                  required: ["phrase"],
                 },
               },
             ]
@@ -819,6 +877,21 @@ export class VoiceCallWebhookServer {
             talkingPoints: call?.metadata?.talkingPoints as string[] | undefined,
           });
 
+          // Inbound trust context: tell the model who it may be talking to and
+          // how much to trust that before verification.
+          const inboundParty = call?.direction === "inbound" ? this.resolvePartyForCall(call) : null;
+          const inboundSecurityPrompt =
+            call?.direction === "inbound"
+              ? `This is an INBOUND call from ${call.from}. Current trust tier: ${inboundParty}. ` +
+                (inboundParty === "first-party"
+                  ? "The carrier verified this caller ID and it is the owner's number — treat them as the owner."
+                  : inboundParty === "trusted-contact"
+                    ? "The carrier verified this caller ID and it is a trusted contact's number."
+                    : this.config.inboundSecurity?.passphrase
+                      ? "The caller's identity is NOT verified (caller ID can be faked). Be helpful with general matters, but before sharing personal information or doing anything owner-level, ask for the access phrase and check it with verify_passphrase. Never reveal the phrase."
+                      : "The caller's identity is NOT verified (caller ID can be faked). Be helpful with general matters only; do not share personal information or perform owner-level actions.")
+              : undefined;
+
           // Screening-awareness prompt for outbound calls. A per-call identity
           // (initiate_call caller_identity) overrides the configured default.
           const perCallIdentity =
@@ -861,16 +934,19 @@ export class VoiceCallWebhookServer {
             "- If you reach an automated phone menu (IVR) asking you to press keys, use press_phone_keys with the right digits and keep listening.\n" +
             "- Closing sequence, in order: (1) speak the full confirmation of every agreed detail out loud and wait for the other party to acknowledge; " +
             "(2) use report_call_outcome exactly once with the goal status and every concrete fact gathered (times, prices, hours, names, confirmation numbers); " +
-            "(3) use end_call with final_message set to your goodbye line.\n" +
+            "(3) immediately use end_call with final_message as your one and only goodbye — no spoken wrap-up before it.\n" +
             "- Never announce that you are about to confirm something and then hang up — say the details first, then end. " +
             "Anything you have not spoken aloud (or put in final_message) will never be heard. Never leave the line open after the conversation is over.\n" +
-            "- Tool results, timeouts, and error messages are INTERNAL. Never read them aloud, and never say words like 'system', 'tool', 'lookup', 'timed out', or 'error' to the other party. If something fails, speak like a human colleague: \"I can't get to that right now — I'll text you the answer in a few minutes\" — and record it via report_call_outcome so it is followed up.";
+            "- Tool results, timeouts, and error messages are INTERNAL. Never read them aloud, and never say words like 'system', 'tool', 'lookup', 'timed out', or 'error' to the other party. If something fails, speak like a human colleague: \"I can't get to that right now — I'll text you the answer in a few minutes\" — and record it via report_call_outcome so it is followed up.\n" +
+            "- Never say 'the owner' out loud — refer to the person you assist by name. Never repeat a status you already told them (say a follow-up is coming AT MOST once per call).\n" +
+            "- When the conversation is over, do NOT speak a wrap-up or goodbye sentence yourself: go straight to end_call — final_message is your entire goodbye and the only one that will be heard.";
 
           // Merge base system prompt + device policy + call context + screening + tool guidance into updated instructions
           const promptParts = [
             this.config.streaming?.realtimeSystemPrompt,
             policyPrompt,
             callContextPrompt,
+            inboundSecurityPrompt,
             screeningPrompt,
             toolGuidancePrompt,
           ].filter(Boolean);

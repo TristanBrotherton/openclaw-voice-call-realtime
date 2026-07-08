@@ -414,6 +414,24 @@ export const VoiceCallConfigSchema = z
     /** Greeting message for inbound calls */
     inboundGreeting: z.string().optional(),
 
+    /**
+     * Inbound trust hardening. Caller ID can be spoofed; these layers decide
+     * how much the voice AI trusts an inbound caller:
+     * - trustStirA: only grant number-based trust when the call carries
+     *   SHAKEN/STIR attestation A ("TN-Validation-Passed-A") — i.e. the
+     *   carrier cryptographically vouches the caller ID is real.
+     * - passphrase: spoken access phrase checked via the verify_passphrase
+     *   tool; on success the caller is treated as the owner regardless of
+     *   attestation. The phrase itself is never placed in the model prompt.
+     */
+    inboundSecurity: z
+      .object({
+        trustStirA: z.boolean().default(true),
+        passphrase: z.string().min(4).optional(),
+      })
+      .strict()
+      .default({ trustStirA: true }),
+
     /** Outbound call configuration */
     outbound: OutboundConfigSchema,
 

@@ -76,20 +76,54 @@ export function extractAssistantText(messages: unknown[]): string | undefined {
  * Determine the trust tier for a call's counterparty.
  * Returns the party label used in the bridge context.
  */
+const normalizeNumber = (n: string) => n.replace(/[^+0-9]/g, "");
+
+/** SHAKEN/STIR attestation A: the carrier vouches the caller ID is genuine. */
+export function hasStirAttestationA(stirVerstat?: string): boolean {
+  return typeof stirVerstat === "string" && /^TN-Validation-Passed-A$/i.test(stirVerstat.trim());
+}
+
 export function resolveCallParty(params: {
   direction?: string;
   from?: string;
   to?: string;
   callParty?: unknown;
   trustedNumbers: string[];
+  /** Owner's own number(s) — inbound from these can be first-party */
+  ownerNumbers?: string[];
+  /** Caller passed the spoken-passphrase check on this call */
+  verifiedOwner?: boolean;
+  /** SHAKEN/STIR status of this (inbound) call */
+  stirVerstat?: string;
+  /** Require attestation A before trusting inbound caller ID (default true) */
+  trustStirA?: boolean;
 }): "first-party" | "trusted-contact" | "third-party" | "unverified" {
+  // A verified passphrase outranks everything, including spoofable caller ID.
+  if (params.verifiedOwner) {
+    return "first-party";
+  }
+
   const counterparty = params.direction === "inbound" ? params.from : params.to;
-  if (counterparty) {
-    const normalized = counterparty.replace(/[^+0-9]/g, "");
-    if (params.trustedNumbers.some((n) => n.replace(/[^+0-9]/g, "") === normalized)) {
+  const normalized = counterparty ? normalizeNumber(counterparty) : undefined;
+  const inList = (list?: string[]) =>
+    !!normalized && (list ?? []).some((n) => normalizeNumber(n) === normalized);
+
+  // Inbound caller ID is spoofable: only trust it when the carrier attests it
+  // (or the deployment explicitly opted out of that requirement).
+  const inboundIdTrustworthy =
+    params.direction !== "inbound" ||
+    params.trustStirA === false ||
+    hasStirAttestationA(params.stirVerstat);
+
+  if (inboundIdTrustworthy) {
+    if (params.direction === "inbound" && inList(params.ownerNumbers)) {
+      return "first-party";
+    }
+    if (inList(params.trustedNumbers)) {
       return "trusted-contact";
     }
   }
+
   if (params.callParty === "first-party") {
     return "first-party";
   }

@@ -126,22 +126,52 @@ describe("resolveCallParty / trusted numbers", () => {
     ).toBe("trusted-contact");
   });
 
-  it("uses `from` for inbound calls and falls back to declared party", async () => {
+  it("inbound caller ID grants trust only with STIR attestation A (or explicit opt-out)", async () => {
+    const { resolveCallParty } = await import("./assistant-bridge.js");
+    const base = { direction: "inbound", from: "+15550003333", trustedNumbers: ["+15550003333"] };
+    // spoofable: no attestation -> unverified
+    expect(resolveCallParty(base)).toBe("unverified");
+    // attested caller ID -> trusted
+    expect(resolveCallParty({ ...base, stirVerstat: "TN-Validation-Passed-A" })).toBe("trusted-contact");
+    // failed/partial attestation -> unverified
+    expect(resolveCallParty({ ...base, stirVerstat: "TN-Validation-Passed-B" })).toBe("unverified");
+    // deployment opted out of the requirement
+    expect(resolveCallParty({ ...base, trustStirA: false })).toBe("trusted-contact");
+    // unknown number stays unverified regardless
+    expect(
+      resolveCallParty({ ...base, from: "+15550004444", stirVerstat: "TN-Validation-Passed-A" }),
+    ).toBe("unverified");
+  });
+
+  it("owner numbers get first-party on attested inbound; passphrase outranks all", async () => {
     const { resolveCallParty } = await import("./assistant-bridge.js");
     expect(
       resolveCallParty({
         direction: "inbound",
-        from: "+15550004444",
-        trustedNumbers: ["+15550003333"],
+        from: "+15550009999",
+        trustedNumbers: [],
+        ownerNumbers: ["+15550009999"],
+        stirVerstat: "TN-Validation-Passed-A",
       }),
-    ).toBe("unverified");
+    ).toBe("first-party");
+    // same call without attestation -> unverified
     expect(
       resolveCallParty({
         direction: "inbound",
-        from: "+15550003333",
-        trustedNumbers: ["+15550003333"],
+        from: "+15550009999",
+        trustedNumbers: [],
+        ownerNumbers: ["+15550009999"],
       }),
-    ).toBe("trusted-contact");
+    ).toBe("unverified");
+    // verified passphrase -> first-party even from an unknown number
+    expect(
+      resolveCallParty({
+        direction: "inbound",
+        from: "+15550000000",
+        trustedNumbers: [],
+        verifiedOwner: true,
+      }),
+    ).toBe("first-party");
   });
 
   it("trusted tier permits actions with attribution", async () => {

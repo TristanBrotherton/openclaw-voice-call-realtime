@@ -32,7 +32,7 @@ Every "AI agent" can send an email. Almost none of them can call the dry cleaner
 - **Semantic turn detection** (optional) — `semantic_vad` understands when a speaker has finished a *thought* rather than just paused, for fewer interruptions and more natural conversations.
 - **Call screening awareness** — handles Google Call Screen and voicemail gatekeepers by identifying itself with a configurable identity phrase.
 - **Goal-directed calls** — pass `talking_points` and `call_party` (first-party vs third-party) and the AI stays on task: cover the points, collect the answers, confirm out loud, wrap up.
-- **Inbound calls** (optional) — allowlist-gated, with a configurable greeting.
+- **Inbound calls** (optional) — allowlist-gated with layered identity verification: SHAKEN/STIR attestation (the carrier cryptographically vouches for the caller ID, defeating spoofing) and an optional spoken access phrase checked by a tool — the phrase never enters the model prompt.
 - **Device profiles** — per-caller policies: response length, forbidden actions, extra instructions.
 - **Hardened by default** — Twilio webhook signature verification, per-call stream auth tokens, pre-auth connection throttling, SSRF-guarded provider API calls, call-duration safety caps, stale-call reaping.
 - **Providers** — Twilio (recommended, full realtime conversation mode), plus Telnyx / Plivo / mock for the legacy TTS+STT pipeline.
@@ -301,6 +301,26 @@ Zero-dependency free/busy from your calendar's secret iCal URL:
 
 The plugin fetches the feed, expands recurring events, and answers with per-day busy windows only — event titles, locations, and attendees never reach the model. Treat the secret URL like a password (anyone with it can read your events); it lives in your OpenClaw config alongside your other credentials, and you can revoke/regenerate it from your calendar provider at any time.
 
+## Inbound calls & caller verification
+
+```jsonc
+"inboundPolicy": "allowlist",
+"allowFrom": ["+15557654321"],
+"inboundGreeting": "Hey, it's your assistant. What can I do for you?",
+"inboundSecurity": {
+  "trustStirA": true,                    // require carrier-attested caller ID for number-based trust
+  "passphrase": "your secret phrase"     // optional spoken fallback, checked via tool
+}
+```
+
+Caller ID is trivially spoofable, so number matching alone is weak authentication. The plugin layers three checks:
+
+1. **Allowlist** (`allowFrom`) — anyone else is rejected before the call connects.
+2. **SHAKEN/STIR attestation** (`trustStirA`, default on) — inbound trust tiers (owner → first-party, `trustedNumbers` → trusted-contact) are granted **only** when Twilio reports `TN-Validation-Passed-A`, meaning the originating carrier cryptographically signed the caller ID. A spoofed call won't carry attestation A, so it lands as *unverified*: the AI stays helpful on generalities but shares nothing personal and performs no actions.
+3. **Spoken passphrase** (optional) — an unverified caller claiming to be the owner is asked for the access phrase, which the AI checks with the `verify_passphrase` tool (normalized comparison, two attempts max). The phrase lives only in your config — it is never placed in the model's prompt, so it can't be tricked out of the AI. Success upgrades the caller to first-party for that call; it also rescues legitimate calls that lack attestation (some carriers/international routes).
+
+The same trust tier drives everything downstream: the assistant-bridge action policy, calendar detail level, and what the AI will discuss.
+
 ## Post-call reports, voicemail handling, transfer & turn detection
 
 ### Post-call reports (`postCallReport`)
@@ -363,6 +383,8 @@ Default is `server_vad` (responds after `silenceDurationMs` of silence). `semant
 | `streaming.realtimePolicy.maxSessionMs` | `7200000` | Realtime session lifetime cap; keep above `maxDurationSeconds` |
 | `callScreening.callerIdentity` | — | Default identity for screening/voicemail; per-call `caller_identity` overrides it |
 | `inboundPolicy` | `disabled` | `allowlist` + `allowFrom: ["+1555…"]` to accept inbound |
+| `inboundSecurity.trustStirA` | `true` | Require SHAKEN/STIR attestation A before trusting inbound caller ID |
+| `inboundSecurity.passphrase` | — | Spoken access phrase (tool-checked, never in the prompt) to verify the owner |
 | `summaryModel` | `gpt-4o-mini` | Chat model for end-of-call summaries |
 | `logTranscripts` | `false` | Log call content to gateway logs (off by default — calls contain personal data) |
 | `assistantBridge.enabled` | `false` | Give the voice AI an `ask_assistant` tool that relays questions to your OpenClaw agent mid-call |

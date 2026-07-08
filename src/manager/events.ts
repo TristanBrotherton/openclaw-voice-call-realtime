@@ -196,6 +196,10 @@ export function processEvent(ctx: EventContext, event: NormalizedEvent): void {
     }
   }
 
+  if (event.stirVerstat && call.metadata?.stirVerstat !== event.stirVerstat) {
+    call.metadata = { ...(call.metadata ?? {}), stirVerstat: event.stirVerstat };
+  }
+
   call.processedEventIds.push(dedupeKey);
   if (call.processedEventIds.length > 500) {
     call.processedEventIds.splice(0, call.processedEventIds.length - 500);
