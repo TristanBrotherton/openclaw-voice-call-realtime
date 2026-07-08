@@ -74,6 +74,9 @@ export class CallManager {
     }
   >();
   private maxDurationTimers = new Map<CallId, NodeJS.Timeout>();
+  private postCallReporter:
+    | ((report: import("./assistant-bridge.js").CallReport) => Promise<void>)
+    | null = null;
 
   constructor(config: VoiceCallConfig, storePath?: string) {
     this.config = config;
@@ -205,6 +208,15 @@ export class CallManager {
   }
 
   /**
+   * Install a post-call reporter invoked once per finalized call.
+   */
+  setPostCallReporter(
+    reporter: (report: import("./assistant-bridge.js").CallReport) => Promise<void>,
+  ): void {
+    this.postCallReporter = reporter;
+  }
+
+  /**
    * Get the current provider.
    */
   getProvider(): VoiceCallProvider | null {
@@ -310,6 +322,31 @@ export class CallManager {
         console.log(
           `[voice-call] Call ${call.callId} finalized (${call.transcript.length} transcript entries${summary ? ", summary generated" : ""})`,
         );
+
+        // Only report calls that actually happened (answered or has speech).
+        if (this.postCallReporter && (call.answeredAt || call.transcript.length > 0)) {
+          const metadata = call.metadata ?? {};
+          const report: import("./assistant-bridge.js").CallReport = {
+            callId: call.callId,
+            direction: call.direction,
+            counterparty: call.direction === "inbound" ? call.from : call.to,
+            ...(call.endedAt && call.answeredAt
+              ? { durationSec: Math.round((call.endedAt - call.answeredAt) / 1000) }
+              : {}),
+            endReason: call.endReason ?? call.state,
+            ...(typeof metadata.answeredBy === "string" ? { answeredBy: metadata.answeredBy } : {}),
+            ...(metadata.outcome ? { outcome: metadata.outcome as { status: string; details: string } } : {}),
+            ...(summary ? { summary } : {}),
+            transcriptPath: filePath,
+          };
+          console.log(`[voice-call] Dispatching post-call report for ${call.callId}`);
+          this.postCallReporter(report).catch((err) => {
+            console.warn(
+              `[voice-call] Post-call report failed for ${call.callId}:`,
+              err instanceof Error ? err.message : String(err),
+            );
+          });
+        }
       } catch (err) {
         console.warn(
           `[voice-call] Failed to finalize call ${call.callId}:`,

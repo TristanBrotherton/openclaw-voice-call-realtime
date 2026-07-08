@@ -119,6 +119,52 @@ export class VoiceCallWebhookServer {
           : "Could not find the active call to record against.";
       }
 
+      case "transfer_to_owner": {
+        const target = this.config.transfer?.number || this.config.toNumber;
+        if (!this.config.transfer?.enabled || !target || this.provider.name !== "twilio") {
+          return "Error: transfer is not available on this call.";
+        }
+        const reason = typeof args.reason === "string" ? args.reason : "caller request";
+        console.log(`[voice-call] transfer_to_owner requested (${reason}) on ${providerCallId}`);
+        const call = this.manager.getCallByProviderCallId(providerCallId);
+        if (call) {
+          this.manager.recordCallOutcome(providerCallId, {
+            status: "partial",
+            details: `Transferred to owner: ${reason}`,
+          });
+          call.metadata = { ...(call.metadata ?? {}), transferredTo: target };
+        }
+        void (async () => {
+          try {
+            // Announce, let it play out fully, then hand the call over.
+            session.setEndingMode(true);
+            session.say("Of course — one moment while I transfer you.");
+            await new Promise((r) => setTimeout(r, 500));
+            const deadline = Date.now() + 10000;
+            while (session.isResponseActive() && Date.now() < deadline) {
+              await new Promise((r) => setTimeout(r, 150));
+            }
+            const streamSession = this.mediaStreamHandler?.getSessionByCallId(providerCallId);
+            if (streamSession && this.mediaStreamHandler) {
+              await this.mediaStreamHandler.waitForPlayoutDrained(streamSession.streamSid, 8000);
+            }
+            await (this.provider as TwilioProvider).transferCall({
+              providerCallId,
+              to: target,
+              callerId: this.config.fromNumber ?? target,
+              timeoutSec: this.config.transfer?.timeoutSec ?? 25,
+            });
+            console.log(`[voice-call] Transfer initiated to ${target} for ${providerCallId}`);
+          } catch (err) {
+            console.warn(
+              "[voice-call] Transfer failed:",
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+        })();
+        return { output: "Transferring now; you will leave the call.", respond: false };
+      }
+
       case "ask_assistant": {
         if (!this.assistantBridge) {
           return "Error: the assistant bridge is not available on this call.";
@@ -453,6 +499,29 @@ export class VoiceCallWebhookServer {
             required: ["status", "details"],
           },
         },
+        ...(this.config.transfer?.enabled && (this.config.transfer.number || this.config.toNumber)
+          ? [
+              {
+                name: "transfer_to_owner",
+                description:
+                  "Transfer this call to the owner's real phone. Use when the other " +
+                  "party genuinely needs the owner (payment details, personal " +
+                  "authorization, or they insist on a human). Announce the transfer " +
+                  "first is handled for you — just call the tool. After it runs you " +
+                  "will leave the call.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    reason: {
+                      type: "string",
+                      description: "Why the transfer is needed.",
+                    },
+                  },
+                  required: ["reason"],
+                },
+              },
+            ]
+          : []),
         ...(this.assistantBridge
           ? [
               {
@@ -530,6 +599,8 @@ export class VoiceCallWebhookServer {
         systemPrompt: this.config.streaming?.realtimeSystemPrompt,
         silenceDurationMs: this.config.streaming?.silenceDurationMs,
         vadThreshold: this.config.streaming?.vadThreshold,
+        turnDetection: this.config.streaming?.turnDetection,
+        vadEagerness: this.config.streaming?.vadEagerness,
         tools: callTools,
       });
       const conversationProvider = {
@@ -607,6 +678,10 @@ export class VoiceCallWebhookServer {
             ? "- For anything you need to know or decide mid-call (availability, preferences, addresses, facts), FIRST tell the other party this may take up to a minute, then use ask_assistant with one specific question. " +
               `Today's date is ${new Date().toISOString().slice(0, 10)}.\n`
             : "";
+          const transferGuidance =
+            this.config.transfer?.enabled && (this.config.transfer.number || this.config.toNumber)
+              ? "- If the other party genuinely needs the owner in person (payment, authorization, or they insist), use transfer_to_owner — do not attempt those things yourself.\n"
+              : "";
           const calendarGuidance =
             this.config.calendar?.enabled && this.config.calendar.icsUrl
               ? "- When scheduling anything, use check_calendar before agreeing to a time. " +
@@ -617,6 +692,7 @@ export class VoiceCallWebhookServer {
             "Call management tools:\n" +
             bridgeGuidance +
             calendarGuidance +
+            transferGuidance +
             "- If you reach an automated phone menu (IVR) asking you to press keys, use press_phone_keys with the right digits and keep listening.\n" +
             "- Closing sequence, in order: (1) speak the full confirmation of every agreed detail out loud and wait for the other party to acknowledge; " +
             "(2) use report_call_outcome exactly once with the goal status and every concrete fact gathered (times, prices, hours, names, confirmation numbers); " +
@@ -912,10 +988,53 @@ export class VoiceCallWebhookServer {
     for (const event of events) {
       try {
         this.manager.processEvent(event);
+        if (event.type === "call.amd") {
+          this.handleAmdResult(event.providerCallId ?? event.callId, event.answeredBy);
+        }
       } catch (err) {
         console.error(`[voice-call] Error processing event ${event.type}:`, err);
       }
     }
+  }
+
+  /**
+   * Apply the configured answering-machine policy once Twilio's async AMD
+   * reports what picked up. With DetectMessageEnd, machine_end_* arrives
+   * right after the voicemail greeting finishes — i.e. at the beep.
+   */
+  private handleAmdResult(providerCallId: string, answeredBy: string): void {
+    console.log(`[voice-call] AMD result for ${providerCallId}: ${answeredBy}`);
+    const isMachine = answeredBy.startsWith("machine") || answeredBy === "fax";
+    if (!isMachine) {
+      return;
+    }
+    const policy = this.config.amd?.onMachine ?? "leave-message";
+    const call = this.manager.getCallByProviderCallId(providerCallId);
+
+    if (policy === "hangup") {
+      if (call) {
+        console.log(`[voice-call] AMD policy hangup: ending ${call.callId}`);
+        void this.manager.endCall(call.callId).catch(() => {});
+      }
+      return;
+    }
+    if (policy === "continue") {
+      return;
+    }
+
+    // leave-message: tell the realtime session it's talking to voicemail.
+    const streamSession = this.mediaStreamHandler?.getSessionByCallId(providerCallId);
+    const conv = streamSession?.conversationSession;
+    if (!conv?.isConnected()) {
+      console.warn(`[voice-call] AMD leave-message: no live conversation session for ${providerCallId}`);
+      return;
+    }
+    conv.instruct(
+      "An answering machine picked up — you are recording a voicemail now (the beep has " +
+        "sounded). Leave ONE concise message: who you are, why you called, and how to reach " +
+        "the owner back if appropriate. Do not ask questions or wait for replies. When the " +
+        "message is complete, use end_call with a brief final_message sign-off.",
+    );
   }
 
   private writeWebhookResponse(res: http.ServerResponse, payload: WebhookResponsePayload): void {

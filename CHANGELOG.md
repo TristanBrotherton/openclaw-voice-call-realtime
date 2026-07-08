@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026.7.12
+
+### Changes
+
+- Post-call reports (`postCallReport.enabled`): when a call finalizes, the
+  owner's OpenClaw agent is briefed automatically — it messages the owner and
+  performs obvious follow-ups. The voice_call tool stops advising polling
+  when this is on.
+- Answering-machine detection (`amd.enabled`): Twilio async AMD with
+  DetectMessageEnd; policy on machine pickup — leave-message (voicemail after
+  the beep, default), hangup, or continue. Verdict recorded in metadata.
+- Mid-call transfer (`transfer.enabled`): new transfer_to_owner in-call tool —
+  announces the handoff, drains playback, then redirects the call to the
+  owner's phone via TwiML <Dial> with a no-answer fallback.
+- Semantic turn detection (`streaming.turnDetection: "semantic_vad"` with
+  `vadEagerness`): thought-aware end-of-turn detection, fewer interruptions.
+
 ## 2026.7.11
 
 ### Changes

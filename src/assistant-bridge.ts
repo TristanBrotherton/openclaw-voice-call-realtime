@@ -178,3 +178,66 @@ export function createAssistantBridge(params: {
     }
   };
 }
+
+export type CallReport = {
+  callId: string;
+  direction: string;
+  counterparty: string;
+  durationSec?: number;
+  endReason?: string;
+  answeredBy?: string;
+  outcome?: { status: string; details: string };
+  summary?: string;
+  transcriptPath?: string;
+};
+
+export type PostCallReporter = (report: CallReport) => Promise<void>;
+
+export function buildCallReportMessage(report: CallReport): string {
+  const lines = [
+    "A phone call handled by your voice-call system just ended. Report it to the owner",
+    "via your usual messaging channel now — keep it brief and lead with the result.",
+    "If the outcome implies an obvious follow-up you can do autonomously (add a",
+    "confirmed appointment to the owner's calendar, note a callback that's needed),",
+    "do it and mention that you did. Do not ask the owner questions; just inform.",
+    "",
+    `Call: ${report.direction} with ${report.counterparty}`,
+    ...(report.durationSec !== undefined ? [`Talk time: ${report.durationSec}s`] : []),
+    `Ended: ${report.endReason ?? "unknown"}`,
+    ...(report.answeredBy ? [`Answered by: ${report.answeredBy}`] : []),
+    ...(report.outcome ? [`Reported outcome: [${report.outcome.status}] ${report.outcome.details}`] : []),
+    ...(report.summary ? [`Summary: ${report.summary}`] : []),
+    ...(report.transcriptPath ? [`Full transcript: ${report.transcriptPath}`] : []),
+    `Call ID: ${report.callId}`,
+  ];
+  return lines.join("\n");
+}
+
+export function createPostCallReporter(params: {
+  subagent: SubagentRuntime;
+  timeoutMs?: number;
+}): PostCallReporter {
+  const timeoutMs = params.timeoutMs ?? 120000;
+
+  return async (report: CallReport): Promise<void> => {
+    const sessionKey = `voicecall-report-${crypto.randomUUID()}`;
+    const { runId } = await params.subagent.run({
+      sessionKey,
+      message: buildCallReportMessage(report),
+      extraSystemPrompt:
+        "You are processing an automated post-call report from your voice-call system. " +
+        "Act autonomously: message the owner with the result, perform clearly warranted " +
+        "follow-ups, and do not wait for or request confirmation.",
+      lightContext: true,
+      deliver: false,
+    });
+    try {
+      const result = await params.subagent.waitForRun({ runId, timeoutMs });
+      if (result.status !== "ok") {
+        throw new Error(result.error || `post-call report ${result.status}`);
+      }
+    } finally {
+      void params.subagent.deleteSession({ sessionKey, deleteTranscript: true }).catch(() => {});
+    }
+  };
+}

@@ -68,6 +68,8 @@ export interface TwilioProviderOptions {
   publicUrl?: string;
   /** Path for media stream WebSocket (e.g., /voice/stream) */
   streamPath?: string;
+  /** Enable Twilio async answering-machine detection on outbound calls */
+  amdEnabled?: boolean;
   /** Skip webhook signature verification (development only) */
   skipVerification?: boolean;
   /** Webhook security options (forwarded headers/allowlist) */
@@ -254,10 +256,13 @@ export class TwilioProvider implements VoiceCallProvider {
           ? ctx.query.turnToken.trim()
           : undefined;
       const dedupeKey = createTwilioRequestDedupeKey(ctx, options?.verifiedRequestKey);
+      const isAmdCallback =
+        typeof ctx.query?.type === "string" && ctx.query.type.trim() === "amd";
       const event = this.normalizeEvent(params, {
         callIdOverride: callIdFromQuery,
         dedupeKey,
         turnToken: turnTokenFromQuery,
+        isAmdCallback,
       });
 
       // For Twilio, we must return TwiML. Most actions are driven by Calls API updates,
@@ -297,6 +302,7 @@ export class TwilioProvider implements VoiceCallProvider {
       callIdOverride?: string;
       dedupeKey?: string;
       turnToken?: string;
+      isAmdCallback?: boolean;
     },
   ): NormalizedEvent | null {
     const callSid = params.get("CallSid") || "";
@@ -330,6 +336,12 @@ export class TwilioProvider implements VoiceCallProvider {
     const digits = params.get("Digits");
     if (digits) {
       return { ...baseEvent, type: "call.dtmf", digits };
+    }
+
+    // Async AMD result callback
+    const answeredBy = params.get("AnsweredBy");
+    if (answeredBy && options?.isAmdCallback) {
+      return { ...baseEvent, type: "call.amd", answeredBy };
     }
 
     // Handle call status changes
@@ -519,6 +531,19 @@ export class TwilioProvider implements VoiceCallProvider {
       Timeout: "30",
     };
 
+    // Async answering-machine detection: call connects immediately; Twilio
+    // posts AnsweredBy to a type=amd callback once it has decided (after the
+    // machine greeting ends, so a voicemail message lands after the beep).
+    if (this.options.amdEnabled) {
+      const amdUrl = new URL(input.webhookUrl);
+      amdUrl.searchParams.set("callId", input.callId);
+      amdUrl.searchParams.set("type", "amd");
+      params.MachineDetection = "DetectMessageEnd";
+      params.AsyncAmd = "true";
+      params.AsyncAmdStatusCallback = amdUrl.toString();
+      params.AsyncAmdStatusCallbackMethod = "POST";
+    }
+
     const result = await this.apiRequest<TwilioCallResponse>("/Calls.json", params);
 
     this.callWebhookUrls.set(result.sid, url.toString());
@@ -544,6 +569,26 @@ export class TwilioProvider implements VoiceCallProvider {
       { Status: "completed" },
       { allowNotFound: true },
     );
+  }
+
+  /**
+   * Transfer the call to another number (blind transfer). Replaces the live
+   * TwiML — the media stream (and AI) leaves the call — and dials the target.
+   * If the target does not answer, the callee hears an apology and the call
+   * ends.
+   */
+  async transferCall(input: {
+    providerCallId: string;
+    to: string;
+    callerId: string;
+    timeoutSec: number;
+  }): Promise<void> {
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial timeout="${Math.floor(input.timeoutSec)}" callerId="${escapeXml(input.callerId)}">${escapeXml(input.to)}</Dial>
+  <Say>Sorry, I wasn't able to reach them. Please try again later. Goodbye.</Say>
+</Response>`;
+    await this.apiRequest(`/Calls/${input.providerCallId}.json`, { Twiml: twiml });
   }
 
   /**

@@ -299,6 +299,13 @@ export const VoiceCallStreamingConfigSchema = z
     silenceDurationMs: z.number().int().positive().default(800),
     /** VAD threshold 0-1 (higher = less sensitive) */
     vadThreshold: z.number().min(0).max(1).default(0.5),
+    /**
+     * Turn detection mode. semantic_vad understands when a thought is
+     * complete (fewer interruptions); server_vad is plain silence-based.
+     */
+    turnDetection: z.enum(["server_vad", "semantic_vad"]).default("server_vad"),
+    /** semantic_vad eagerness to respond */
+    vadEagerness: z.enum(["low", "medium", "high", "auto"]).default("auto"),
     /** WebSocket path for media stream connections */
     streamPath: z.string().min(1).default("/voice/stream"),
     /** Managed realtime session lifecycle policy */
@@ -460,6 +467,50 @@ export const VoiceCallConfigSchema = z
 
     /** Call screening detection and response */
     callScreening: CallScreeningConfigSchema,
+
+    /**
+     * Answering machine detection (Twilio async AMD) for outbound calls.
+     * onMachine: leave-message (default) instructs the voice AI to leave a
+     * concise voicemail after the beep; hangup ends the call; continue
+     * behaves as if a human answered.
+     */
+    amd: z
+      .object({
+        enabled: z.boolean().default(false),
+        onMachine: z.enum(["leave-message", "hangup", "continue"]).default("leave-message"),
+      })
+      .strict()
+      .default({ enabled: false, onMachine: "leave-message" }),
+
+    /**
+     * Post-call report: when a call finalizes, run an agent turn that informs
+     * the owner via their usual channel and performs obvious follow-ups
+     * (e.g. add a confirmed booking to the calendar). Requires the OpenClaw
+     * subagent runtime (same as assistantBridge).
+     */
+    postCallReport: z
+      .object({
+        enabled: z.boolean().default(false),
+        timeoutMs: z.number().int().positive().default(120000),
+      })
+      .strict()
+      .default({ enabled: false, timeoutMs: 120000 }),
+
+    /**
+     * Mid-call transfer: gives the voice AI a transfer_to_owner tool that
+     * announces the handoff, then redirects the call to the owner's real
+     * phone. Blind transfer via TwiML <Dial>; the AI leaves the call.
+     */
+    transfer: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** Number to transfer to (falls back to toNumber) */
+        number: E164Schema.optional(),
+        /** Seconds to ring the owner before giving up */
+        timeoutSec: z.number().int().min(5).max(120).default(25),
+      })
+      .strict()
+      .default({ enabled: false, timeoutSec: 25 }),
 
     /** Optional device-specific voice policies */
     deviceProfiles: z.array(DeviceVoicePolicySchema).default([]),

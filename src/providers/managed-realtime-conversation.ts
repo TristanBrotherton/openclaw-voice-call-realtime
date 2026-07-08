@@ -96,6 +96,11 @@ export class ManagedRealtimeConversationSession {
     this.session.say(message);
   }
 
+  instruct(instructions: string): void {
+    this.noteActivity();
+    this.session.instruct(instructions);
+  }
+
   onToolCall(handler: RealtimeToolHandler): void {
     this.session.onToolCall((name, args) => {
       this.noteActivity();

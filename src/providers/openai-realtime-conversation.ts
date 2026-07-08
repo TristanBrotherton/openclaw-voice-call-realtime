@@ -17,6 +17,8 @@ export interface RealtimeConversationConfig {
   systemPrompt?: string;
   silenceDurationMs?: number;
   vadThreshold?: number;
+  turnDetection?: "server_vad" | "semantic_vad";
+  vadEagerness?: "low" | "medium" | "high" | "auto";
   tools?: RealtimeToolDefinition[];
 }
 
@@ -50,6 +52,8 @@ export interface RealtimeConversationSession {
   updateInstructions(instructions: string): void;
   /** Speak a verbatim message through the realtime voice (used by speak/continue tools). */
   say(message: string): void;
+  /** Prompt the model to respond following ad-hoc instructions (not verbatim). */
+  instruct(instructions: string): void;
   /** Register a handler invoked when the model calls a function tool. */
   onToolCall(handler: RealtimeToolHandler): void;
   /** Register a callback fired when a model response completes. */
@@ -73,6 +77,8 @@ export class OpenAIRealtimeConversationProvider {
   private silenceDurationMs: number;
   private vadThreshold: number;
   private tools: RealtimeToolDefinition[];
+  private turnDetection: "server_vad" | "semantic_vad";
+  private vadEagerness: "low" | "medium" | "high" | "auto";
 
   constructor(config: RealtimeConversationConfig) {
     if (!config.apiKey) {
@@ -85,6 +91,8 @@ export class OpenAIRealtimeConversationProvider {
     this.silenceDurationMs = config.silenceDurationMs ?? 800;
     this.vadThreshold = config.vadThreshold ?? 0.5;
     this.tools = config.tools ?? [];
+    this.turnDetection = config.turnDetection ?? "server_vad";
+    this.vadEagerness = config.vadEagerness ?? "auto";
   }
 
   createSession(): RealtimeConversationSession {
@@ -96,6 +104,8 @@ export class OpenAIRealtimeConversationProvider {
       this.silenceDurationMs,
       this.vadThreshold,
       this.tools,
+      this.turnDetection,
+      this.vadEagerness,
     );
   }
 }
@@ -140,6 +150,8 @@ class OpenAIRealtimeConversationSession implements RealtimeConversationSession {
     private readonly silenceDurationMs: number,
     private readonly vadThreshold: number,
     private readonly tools: RealtimeToolDefinition[] = [],
+    private readonly turnDetection: "server_vad" | "semantic_vad" = "server_vad",
+    private readonly vadEagerness: "low" | "medium" | "high" | "auto" = "auto",
   ) {
     this.currentInstructions = systemPrompt;
   }
@@ -158,11 +170,14 @@ class OpenAIRealtimeConversationSession implements RealtimeConversationSession {
         input: {
           format: { type: "audio/pcmu" },
           transcription: { model: "gpt-4o-transcribe" },
-          turn_detection: {
-            type: "server_vad",
-            threshold: this.vadThreshold,
-            silence_duration_ms: this.silenceDurationMs,
-          },
+          turn_detection:
+            this.turnDetection === "semantic_vad"
+              ? { type: "semantic_vad", eagerness: this.vadEagerness }
+              : {
+                  type: "server_vad",
+                  threshold: this.vadThreshold,
+                  silence_duration_ms: this.silenceDurationMs,
+                },
         },
         output: {
           format: { type: "audio/pcmu" },
@@ -531,5 +546,15 @@ class OpenAIRealtimeConversationSession implements RealtimeConversationSession {
       type: "response.create",
       response: { instructions: `Say exactly: "${message}"` },
     });
+  }
+
+  instruct(instructions: string): void {
+    if (!this.connected) {
+      return;
+    }
+    if (this.responseActive) {
+      this.sendEvent({ type: "response.cancel" });
+    }
+    this.sendEvent({ type: "response.create", response: { instructions } });
   }
 }

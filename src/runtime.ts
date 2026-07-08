@@ -109,6 +109,7 @@ function resolveProvider(config: VoiceCallConfig): VoiceCallProvider {
           publicUrl: config.publicUrl,
           skipVerification: config.skipSignatureVerification,
           streamPath: config.streaming?.enabled ? config.streaming.streamPath : undefined,
+          amdEnabled: config.amd?.enabled ?? false,
           webhookSecurity: config.webhookSecurity,
         },
       );
@@ -138,6 +139,7 @@ export async function createVoiceCallRuntime(params: {
   ttsRuntime?: TelephonyTtsRuntime;
   logger?: Logger;
   assistantBridge?: import("./assistant-bridge.js").AssistantBridge;
+  postCallReporter?: import("./assistant-bridge.js").PostCallReporter;
 }): Promise<VoiceCallRuntime> {
   const { config: rawConfig, coreConfig, ttsRuntime, logger } = params;
   const log = logger ?? {
@@ -166,6 +168,9 @@ export async function createVoiceCallRuntime(params: {
 
   const provider = resolveProvider(config);
   const manager = new CallManager(config);
+  if (params.postCallReporter && config.postCallReport?.enabled) {
+    manager.setPostCallReporter(params.postCallReporter);
+  }
   const webhookServer = new VoiceCallWebhookServer(config, manager, provider, coreConfig, {
     assistantBridge: params.assistantBridge,
   });

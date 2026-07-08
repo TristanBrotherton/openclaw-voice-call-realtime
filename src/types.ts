@@ -119,6 +119,11 @@ export const NormalizedEventSchema = z.discriminatedUnion("type", [
     digits: z.string(),
   }),
   BaseEventSchema.extend({
+    type: z.literal("call.amd"),
+    /** Twilio AnsweredBy: human, machine_start, machine_end_beep, machine_end_silence, machine_end_other, fax, unknown */
+    answeredBy: z.string(),
+  }),
+  BaseEventSchema.extend({
     type: z.literal("call.ended"),
     reason: EndReasonSchema,
   }),

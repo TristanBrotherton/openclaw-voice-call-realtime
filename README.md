@@ -24,7 +24,11 @@ Every "AI agent" can send an email. Almost none of them can call the dry cleaner
   - `end_call` — graceful hangup: speaks a closing line, waits for it to *actually play out* on the line (Twilio mark echo), then disconnects. No clipped goodbyes, no lingering dead air.
   - `ask_assistant` (optional) — the killer feature for scheduling: mid-call, the voice AI relays a question to your OpenClaw agent ("is Wednesday 2pm free?") and speaks the answer. Your agent answers with its full toolset — calendar, search, smart home, anything — so the phone persona stays thin and your agent stays the brain.
   - `check_calendar` (optional) — zero-dependency alternative: free/busy straight from a secret iCal feed URL (Google Calendar, iCloud, Outlook, Fastmail). Only busy windows are exposed — never event titles or details.
+  - `transfer_to_owner` (optional) — when the other party genuinely needs a human (payment details, authorization), the AI announces the handoff and transfers the call to your real phone.
 - **Transcripts & summaries** — every call is finalized into a Markdown transcript with an AI-generated summary and the reported outcome. Retrievable after the call via the `get_transcript` tool action.
+- **Post-call reports** (optional) — when a call ends, your OpenClaw agent is briefed automatically: it messages you the result and performs obvious follow-ups (adds the confirmed booking to your calendar, notes a needed retry). Calls stop being fire-and-forget.
+- **Answering-machine detection** (optional) — Twilio async AMD tells the plugin definitively when voicemail picked up; policy decides: leave a concise message after the beep (default), hang up, or continue as normal.
+- **Semantic turn detection** (optional) — `semantic_vad` understands when a speaker has finished a *thought* rather than just paused, for fewer interruptions and more natural conversations.
 - **Call screening awareness** — handles Google Call Screen and voicemail gatekeepers by identifying itself with a configurable identity phrase.
 - **Goal-directed calls** — pass `talking_points` and `call_party` (first-party vs third-party) and the AI stays on task: cover the points, collect the answers, confirm out loud, wrap up.
 - **Inbound calls** (optional) — allowlist-gated, with a configurable greeting.
@@ -281,6 +285,46 @@ Zero-dependency free/busy from your calendar's secret iCal URL:
 
 The plugin fetches the feed, expands recurring events, and answers with per-day busy windows only — event titles, locations, and attendees never reach the model. Treat the secret URL like a password (anyone with it can read your events); it lives in your OpenClaw config alongside your other credentials, and you can revoke/regenerate it from your calendar provider at any time.
 
+## Post-call reports, voicemail handling, transfer & turn detection
+
+### Post-call reports (`postCallReport`)
+
+```jsonc
+"postCallReport": { "enabled": true, "timeoutMs": 120000 }
+```
+
+When a call finalizes (transcript written, summary generated), the plugin runs a scoped agent turn — same mechanism as `ask_assistant` — briefing your OpenClaw agent with the result, outcome, summary, and transcript path. The agent messages you through its usual channel and handles clear follow-ups autonomously. Requires the OpenClaw subagent runtime. When enabled, the `voice_call` tool tells your agent not to poll for results — reports arrive on their own.
+
+### Answering-machine detection (`amd`)
+
+```jsonc
+"amd": { "enabled": true, "onMachine": "leave-message" }
+```
+
+Uses Twilio's async AMD with `DetectMessageEnd`: the call connects immediately (no answer delay for humans), and when Twilio determines a machine answered — timed to the end of the greeting, i.e. the beep — the policy applies:
+
+- `leave-message` (default): the voice AI is told it's recording a voicemail and leaves one concise message, then hangs up.
+- `hangup`: end the call silently (pairs well with post-call reports → your agent can schedule a retry).
+- `continue`: behave as if a human answered.
+
+The AMD verdict (`answeredBy`) is recorded in call metadata and included in transcripts and post-call reports. Note AMD adds a small Twilio per-call fee.
+
+### Mid-call transfer (`transfer`)
+
+```jsonc
+"transfer": { "enabled": true, "number": "+15557654321", "timeoutSec": 25 }
+```
+
+Gives the voice AI a `transfer_to_owner` tool for the moments that genuinely need a human: it announces the handoff ("one moment while I transfer you"), lets the announcement play out, then redirects the call to your phone via TwiML `<Dial>` — the AI leaves the call. If you don't pick up within `timeoutSec`, the callee hears an apology and the call ends. `number` falls back to `toNumber`. The transfer is recorded as the call outcome.
+
+### Semantic turn detection (`streaming.turnDetection`)
+
+```jsonc
+"streaming": { "turnDetection": "semantic_vad", "vadEagerness": "auto" }
+```
+
+Default is `server_vad` (responds after `silenceDurationMs` of silence). `semantic_vad` lets the model judge when the speaker has completed a thought — noticeably fewer interruptions with slow or hesitant speakers. `vadEagerness` (`low`/`medium`/`high`/`auto`) trades response snappiness against patience.
+
 ## Key configuration reference
 
 | Key | Default | Notes |
@@ -300,6 +344,10 @@ The plugin fetches the feed, expands recurring events, and answers with per-day 
 | `assistantBridge.enabled` | `false` | Give the voice AI an `ask_assistant` tool that relays questions to your OpenClaw agent mid-call |
 | `assistantBridge.trustedNumbers` | `[]` | E.164 numbers treated like the owner for the bridge action policy (family, partner) |
 | `calendar.enabled` + `calendar.icsUrl` | `false` | `check_calendar` free/busy tool from a secret iCal feed (no agent required) |
+| `postCallReport.enabled` | `false` | Brief your agent automatically when calls end (message you + follow-ups) |
+| `amd.enabled` / `amd.onMachine` | `false` / `leave-message` | Answering-machine detection and voicemail policy |
+| `transfer.enabled` / `transfer.number` | `false` | `transfer_to_owner` tool — hand the call to your real phone |
+| `streaming.turnDetection` | `server_vad` | `semantic_vad` for thought-aware turn taking (`vadEagerness` tunes it) |
 | `skipSignatureVerification` | `false` | Leave `false` in production |
 | `deviceProfiles` | `[]` | Per-caller response length / forbidden actions / instructions |
 

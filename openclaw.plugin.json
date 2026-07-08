@@ -528,6 +528,24 @@
             "minimum": 0,
             "maximum": 1
           },
+          "turnDetection": {
+            "default": "server_vad",
+            "type": "string",
+            "enum": [
+              "server_vad",
+              "semantic_vad"
+            ]
+          },
+          "vadEagerness": {
+            "default": "auto",
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "auto"
+            ]
+          },
           "streamPath": {
             "default": "/voice/stream",
             "type": "string",
@@ -1046,6 +1064,73 @@
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
+      "amd": {
+        "default": {
+          "enabled": false,
+          "onMachine": "leave-message"
+        },
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "onMachine": {
+            "default": "leave-message",
+            "type": "string",
+            "enum": [
+              "leave-message",
+              "hangup",
+              "continue"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "postCallReport": {
+        "default": {
+          "enabled": false,
+          "timeoutMs": 120000
+        },
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "timeoutMs": {
+            "default": 120000,
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
+      "transfer": {
+        "default": {
+          "enabled": false,
+          "timeoutSec": 25
+        },
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "number": {
+            "type": "string",
+            "pattern": "^\\+[1-9]\\d{1,14}$"
+          },
+          "timeoutSec": {
+            "default": 25,
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 120
           }
         },
         "additionalProperties": false

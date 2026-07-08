@@ -9,7 +9,7 @@ import {
   type VoiceCallConfig,
 } from "./src/config.js";
 import type { CoreConfig } from "./src/core-bridge.js";
-import { createAssistantBridge } from "./src/assistant-bridge.js";
+import { createAssistantBridge, createPostCallReporter } from "./src/assistant-bridge.js";
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./src/runtime.js";
 
 const voiceCallConfigSchema = {
@@ -215,12 +215,22 @@ const voiceCallPlugin = {
             "[voice-call] assistantBridge enabled but this OpenClaw build does not expose runtime.subagent; ask_assistant disabled",
           );
         }
+        const postCallReporter =
+          config.postCallReport?.enabled && subagent
+            ? createPostCallReporter({ subagent, timeoutMs: config.postCallReport.timeoutMs })
+            : undefined;
+        if (config.postCallReport?.enabled && !subagent) {
+          api.logger.warn(
+            "[voice-call] postCallReport enabled but this OpenClaw build does not expose runtime.subagent; reports disabled",
+          );
+        }
         runtimePromise = createVoiceCallRuntime({
           config,
           coreConfig: api.config as CoreConfig,
           ttsRuntime: api.runtime.tts,
           logger: api.logger,
           assistantBridge,
+          postCallReporter,
         });
       }
       try {
@@ -445,9 +455,13 @@ const voiceCallPlugin = {
       label: "Voice Call",
       description:
         "Make phone calls and have voice conversations via the voice-call plugin. " +
-        "In conversation mode the realtime AI handles the dialogue autonomously; " +
-        "poll get_status until the call ends, then use get_transcript to fetch the " +
-        "call summary and full transcript to report back or answer questions about the call.",
+        "In conversation mode the realtime AI handles the dialogue autonomously. " +
+        (config.postCallReport?.enabled
+          ? "Call results are reported to the owner automatically when the call ends — " +
+            "do NOT poll get_status or send your own completion report unless asked. "
+          : "Poll get_status until the call ends, then use get_transcript to fetch the " +
+            "call summary and full transcript to report back. ") +
+        "get_transcript works any time after a call ends.",
       parameters: VoiceCallToolSchema,
       async execute(_toolCallId, params) {
         const json = (payload: unknown) => ({

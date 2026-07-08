@@ -49,7 +49,7 @@ export function readTwimlRequestView(ctx: WebhookContext): TwimlRequestView {
   return {
     callStatus: params.get("CallStatus"),
     direction: params.get("Direction"),
-    isStatusCallback: type === "status",
+    isStatusCallback: type === "status" || type === "amd",
     callSid: params.get("CallSid") || undefined,
     callIdFromQuery,
   };

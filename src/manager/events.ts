@@ -227,6 +227,10 @@ export function processEvent(ctx: EventContext, event: NormalizedEvent): void {
       transitionState(call, "active");
       break;
 
+    case "call.amd":
+      call.metadata = { ...(call.metadata ?? {}), answeredBy: event.answeredBy };
+      break;
+
     case "call.speaking":
       transitionState(call, "speaking");
       if (event.text) {
