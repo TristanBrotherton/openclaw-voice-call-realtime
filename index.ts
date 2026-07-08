@@ -226,6 +226,7 @@ const voiceCallPlugin = {
                 subagent,
                 timeoutMs: config.assistantBridge.timeoutMs,
                 model: config.assistantBridge.model,
+                ownerActions: config.assistantBridge.ownerActions,
               })
             : undefined;
         if (config.assistantBridge?.enabled && !subagent) {

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.7.18
+
+### Changes
+
+- `assistantBridge.ownerActions` (off | confirm-sensitive | full): verified
+  owner/trusted calls can drive the agent's full toolset through
+  ask_assistant, not just ask questions. Third-party/unverified calls remain
+  questions-only regardless. The phone-facing model still holds no tools
+  directly — the agent is the sole executor and boundary. Default
+  confirm-sensitive requires spoken confirmation for irreversible actions.
+
 ## 2026.7.17
 
 ### Changes

@@ -1332,6 +1332,15 @@
               "type": "string",
               "pattern": "^\\+[1-9]\\d{1,14}$"
             }
+          },
+          "ownerActions": {
+            "default": "confirm-sensitive",
+            "type": "string",
+            "enum": [
+              "off",
+              "confirm-sensitive",
+              "full"
+            ]
           }
         },
         "additionalProperties": false

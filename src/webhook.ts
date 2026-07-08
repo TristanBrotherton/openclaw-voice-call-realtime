@@ -739,11 +739,14 @@ export class VoiceCallWebhookServer {
               {
                 name: "ask_assistant",
                 description:
-                  "Ask the owner's assistant a question mid-call and get an answer " +
-                  "to use on the call — check calendar availability, look up a " +
-                  "fact, get a preference or decision. Takes 10-40 seconds: tell " +
-                  "the other party you need a moment BEFORE calling this. Ask " +
-                  "one specific question at a time.",
+                  "Relay a request to the owner's personal assistant, which has the " +
+                  "owner's full toolset, and get an answer to use on the call. Use it " +
+                  "to look up facts/preferences, and — on a verified call with the " +
+                  "owner or a trusted contact — to actually GET THINGS DONE (control " +
+                  "smart home, add reminders, send a message, etc.); the assistant " +
+                  "enforces what is allowed and may ask you to get spoken confirmation " +
+                  "for sensitive actions. Takes 10-40 seconds: tell the other party " +
+                  "you need a moment BEFORE calling this. One request at a time.",
                 parameters: {
                   type: "object",
                   properties: {
@@ -906,7 +909,7 @@ export class VoiceCallWebhookServer {
               : undefined;
 
           const bridgeGuidance = this.assistantBridge
-            ? "- For non-calendar things you need to know mid-call (preferences, addresses, facts), FIRST tell the other party this may take up to a minute, then use ask_assistant with one specific question. " +
+            ? "- For non-calendar things mid-call — facts, preferences, and (on a verified owner/trusted call) ACTIONS like controlling the home, reminders, or messages — FIRST tell the other party this may take up to a minute, then use ask_assistant. If it asks you to confirm a sensitive action, get the caller's explicit spoken 'confirm' and relay it back. " +
               `Today's date is ${new Date().toISOString().slice(0, 10)}.\n`
             : "";
           const askOwnerGuidance =

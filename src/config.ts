@@ -610,6 +610,16 @@ export const VoiceCallConfigSchema = z
          * parties are questions-only.
          */
         trustedNumbers: z.array(E164Schema).default([]),
+        /**
+         * What the agent may DO (not just answer) on verified first-party /
+         * trusted calls:
+         * - "off": questions only, never act (most conservative)
+         * - "confirm-sensitive" (default): act, but sensitive/irreversible
+         *   actions require the caller to confirm out loud first
+         * - "full": act with the agent's normal judgment, no extra confirm step
+         * Third-party and unverified calls are ALWAYS questions-only regardless.
+         */
+        ownerActions: z.enum(["off", "confirm-sensitive", "full"]).default("confirm-sensitive"),
       })
       .strict()
       .default({ enabled: false, timeoutMs: 60000, trustedNumbers: [] }),

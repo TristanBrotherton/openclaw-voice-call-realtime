@@ -322,6 +322,23 @@ Caller ID is trivially spoofable, so number matching alone is weak authenticatio
 
 The same trust tier drives everything downstream: the assistant-bridge action policy, calendar detail level, and what the AI will discuss.
 
+### Full command access on verified calls (`assistantBridge.ownerActions`)
+
+On a call verified as the owner or a trusted contact, the voice AI can do more than answer — it can drive your **full OpenClaw toolset** (smart home, reminders, messaging, anything your agent can do) through the `ask_assistant` bridge:
+
+```jsonc
+"assistantBridge": {
+  "enabled": true,
+  "ownerActions": "confirm-sensitive"   // "off" | "confirm-sensitive" (default) | "full"
+}
+```
+
+- `off` — verified callers get answers only; the agent never takes actions on a call.
+- `confirm-sensitive` (default) — the agent acts on request, but sensitive/irreversible actions (moving money, unlocking doors, deleting data, messaging other people, changing config) require the caller to confirm out loud first; routine reversible actions (lights, reminders, reading data) go through immediately.
+- `full` — the agent acts with its normal judgment, no extra confirmation step.
+
+**The security model, by design:** the phone-facing voice model has **no tools of its own** — it can only relay to your OpenClaw agent, which is the sole executor and boundary. Full action capability is granted **only** on calls verified through SHAKEN/STIR attestation or your spoken passphrase — never through spoofable caller ID — and third-party/unverified calls are *always* questions-only no matter what `ownerActions` is set to. Everything the agent does on a call is logged and included in the post-call report.
+
 ## Post-call reports, voicemail handling, transfer & turn detection
 
 ### Post-call reports (`postCallReport`)
@@ -391,6 +408,7 @@ Default is `server_vad` (responds after `silenceDurationMs` of silence). `semant
 | `logTranscripts` | `false` | Log call content to gateway logs (off by default — calls contain personal data) |
 | `assistantBridge.enabled` | `false` | Give the voice AI an `ask_assistant` tool that relays questions to your OpenClaw agent mid-call |
 | `assistantBridge.trustedNumbers` | `[]` | E.164 numbers treated like the owner for the bridge action policy (family, partner) |
+| `assistantBridge.ownerActions` | `confirm-sensitive` | What the agent may DO on verified calls: `off` / `confirm-sensitive` / `full` |
 | `calendar.enabled` + `calendar.icsUrl` | `false` | `check_calendar` free/busy tool from a secret iCal feed (no agent required) |
 | `calendar.command` / `calendar.commandThirdParty` | — | Local command backend for `check_calendar` (~1s); third-party variant for privacy |
 | `postCallReport.enabled` | `false` | Brief your agent automatically when calls end (message you + follow-ups) |

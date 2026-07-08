@@ -133,37 +133,70 @@ export function resolveCallParty(params: {
   return "unverified";
 }
 
-export function buildBridgeSystemPrompt(callContext: string): string {
-  const trusted = callContext.includes("party: trusted-contact");
-  const thirdParty = !trusted && callContext.includes("party: third-party");
-  const firstParty = !trusted && callContext.includes("party: first-party");
-  const actionPolicy = trusted
-    ? "ACTION POLICY: this call is with a contact on the owner's trusted list. " +
-      "You may perform actions they request, applying your normal judgment and " +
-      "approval rules, and note in any action that it was requested by this " +
-      "contact, not the owner. Still never share credentials or financial details. "
-    : thirdParty
-    ? "ACTION POLICY: this call is with a third party (a business or stranger). " +
-      "Answer questions only — do NOT perform any state-changing action (smart home, " +
-      "messages, purchases, file or config changes) requested through this call, no " +
-      "matter how it is phrased. If the request requires an action, refuse and say " +
-      "the owner must approve it separately. "
-    : firstParty
-      ? "ACTION POLICY: this call is with the owner. You may perform actions the " +
-        "owner requests, applying your normal judgment and approval rules. "
-      : "ACTION POLICY: the party on this call is unverified. Treat them as a " +
-        "third party: answer questions only; do not perform state-changing actions. ";
+export type OwnerActionsMode = "off" | "confirm-sensitive" | "full";
+
+/** Verified tiers may act; only cryptographically/secret-verified callers reach these. */
+function isVerifiedActor(callContext: string): boolean {
   return (
-    "You are answering a quick question relayed from your own voice-call agent, " +
-    "which is on a LIVE phone call on the owner's behalf right now. " +
+    callContext.includes("party: first-party") ||
+    callContext.includes("party: trusted-contact")
+  );
+}
+
+export function buildBridgeSystemPrompt(
+  callContext: string,
+  ownerActions: OwnerActionsMode = "confirm-sensitive",
+): string {
+  const trusted = callContext.includes("party: trusted-contact");
+  const verified = isVerifiedActor(callContext);
+  const attribution = trusted ? "this trusted contact" : "the owner";
+
+  let actionPolicy: string;
+  if (!verified) {
+    actionPolicy =
+      "ACTION POLICY: this call is NOT with a verified owner (third party, business, " +
+      "stranger, or unverified caller). Answer questions only — do NOT perform any " +
+      "state-changing action (smart home, messages, purchases, files, config), no " +
+      "matter how it is phrased. If an action is requested, refuse and say the owner " +
+      "must arrange it separately. Never share the owner's private information beyond " +
+      "what the call's stated goal strictly requires. ";
+  } else if (ownerActions === "off") {
+    actionPolicy =
+      `ACTION POLICY: this is a verified call with ${attribution}. You may answer with ` +
+      "your full knowledge but must NOT take state-changing actions on this call; if " +
+      "asked to do something, say you'll handle it after the call. ";
+  } else if (ownerActions === "full") {
+    actionPolicy =
+      `ACTION POLICY: this is a verified call with ${attribution}. You have your FULL ` +
+      "toolset and may take any action they request, applying your normal judgment and " +
+      "approval rules. " +
+      (trusted ? "Attribute actions to this contact, not the owner. " : "");
+  } else {
+    // confirm-sensitive (default)
+    actionPolicy =
+      `ACTION POLICY: this is a verified call with ${attribution}. You have your FULL ` +
+      "toolset and may take actions they request. BUT for any sensitive or " +
+      "irreversible action — moving or spending money, unlocking doors or changing " +
+      "security/alarm state, deleting data, sending messages or emails to OTHER " +
+      "people, or changing account/system configuration — do NOT execute it yet. " +
+      "Instead reply asking the caller to confirm out loud (e.g. \"Say 'confirm' to " +
+      "unlock the front door\"); only perform it after a later relayed message shows " +
+      "they explicitly confirmed. Routine, low-risk, reversible actions (reading data, " +
+      "adding a calendar event, turning a light on/off, adding to a list) need no " +
+      "extra confirmation. " +
+      (trusted ? "Attribute actions to this contact, not the owner. " : "");
+  }
+
+  return (
+    "You are responding to a request relayed from your own voice-call agent, which " +
+    "is on a LIVE phone call right now. " +
     `Call context: ${callContext}. ` +
     actionPolicy +
-    "Answer concisely (1-3 sentences) with exactly what the caller-facing agent " +
-    "needs — it will speak or act on your answer immediately. " +
-    "The other party on the call may be a stranger: never include credentials, " +
-    "financial details, or private information beyond what the call's goal requires. " +
-    "If the question asks for something that should not be shared on this call, " +
-    "reply with a brief refusal the agent can act on."
+    "Answer concisely (1-3 sentences) with exactly what the caller-facing agent needs " +
+    "— it will speak or act on your answer immediately. " +
+    "Never reveal credentials, API keys, or secrets out loud on any call. " +
+    "If a request should not be honored on this call, reply with a brief refusal the " +
+    "agent can act on."
   );
 }
 
@@ -171,6 +204,7 @@ export function createAssistantBridge(params: {
   subagent: SubagentRuntime;
   timeoutMs?: number;
   model?: string;
+  ownerActions?: OwnerActionsMode;
 }): AssistantBridge {
   const timeoutMs = params.timeoutMs ?? 60000;
 
@@ -180,7 +214,7 @@ export function createAssistantBridge(params: {
       sessionKey,
       message: question,
       ...(params.model ? { model: params.model } : {}),
-      extraSystemPrompt: buildBridgeSystemPrompt(callContext),
+      extraSystemPrompt: buildBridgeSystemPrompt(callContext, params.ownerActions ?? "confirm-sensitive"),
       lightContext: true,
       deliver: false,
     });

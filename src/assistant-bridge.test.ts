@@ -98,18 +98,31 @@ describe("bridge action policy", () => {
     expect(prompt).toContain("do NOT perform any state-changing action");
   });
 
-  it("allows owner-requested actions on first-party calls", async () => {
+  it("allows owner-requested actions on first-party calls (default confirm-sensitive)", async () => {
     const { buildBridgeSystemPrompt } = await import("./assistant-bridge.js");
     const prompt = buildBridgeSystemPrompt("outbound call to +15550001111, party: first-party");
-    expect(prompt).toContain("call is with the owner");
-    expect(prompt).not.toContain("do NOT perform any state-changing action");
+    expect(prompt).toContain("verified call with the owner");
+    expect(prompt).toContain("FULL");
+    expect(prompt).toContain("confirm"); // sensitive-action confirmation guard
   });
 
-  it("treats unknown parties as third-party", async () => {
+  it("treats unknown parties as unverified/questions-only", async () => {
     const { buildBridgeSystemPrompt } = await import("./assistant-bridge.js");
     const prompt = buildBridgeSystemPrompt("inbound call from +15550002222");
-    expect(prompt).toContain("unverified");
-    expect(prompt).toContain("do not perform state-changing actions");
+    expect(prompt).toContain("NOT with a verified owner");
+    expect(prompt).toContain("do NOT perform any state-changing action");
+  });
+
+  it("owner-actions modes: off forbids, full skips the confirm step", async () => {
+    const { buildBridgeSystemPrompt } = await import("./assistant-bridge.js");
+    const off = buildBridgeSystemPrompt("call, party: first-party", "off");
+    expect(off).toContain("must NOT take state-changing actions");
+    const full = buildBridgeSystemPrompt("call, party: first-party", "full");
+    expect(full).toContain("FULL toolset");
+    expect(full).not.toContain("confirm out loud");
+    // third-party is questions-only even when ownerActions is full
+    const stranger = buildBridgeSystemPrompt("call, party: third-party", "full");
+    expect(stranger).toContain("do NOT perform any state-changing action");
   });
 });
 
@@ -177,8 +190,8 @@ describe("resolveCallParty / trusted numbers", () => {
   it("trusted tier permits actions with attribution", async () => {
     const { buildBridgeSystemPrompt } = await import("./assistant-bridge.js");
     const prompt = buildBridgeSystemPrompt("inbound call from +15550003333, party: trusted-contact");
-    expect(prompt).toContain("trusted list");
-    expect(prompt).toContain("requested by this");
+    expect(prompt).toContain("trusted contact");
+    expect(prompt).toContain("Attribute actions to this contact");
     expect(prompt).not.toContain("do NOT perform any state-changing action");
   });
 });
