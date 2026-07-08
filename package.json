@@ -1,0 +1,29 @@
+{
+  "name": "voice-call-tristan",
+  "version": "2026.7.7",
+  "description": "Real phone calls for your OpenClaw assistant \u2014 Twilio + OpenAI Realtime conversation mode with in-call tools, transcripts, and call screening",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48",
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "openclaw": "^2026.6.6",
+    "vitest": "^4.1.10"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TristanBrotherton/openclaw-voice-call-realtime.git"
+  },
+  "scripts": {
+    "test": "vitest run"
+  }
+}

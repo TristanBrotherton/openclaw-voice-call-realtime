@@ -1,0 +1,6 @@
+{
+  "id": "voice-call-tristan",
+  "name": "Voice Call",
+  "version": "2026.3.2-tristan.1",
+  "entry": "./index.ts"
+}
