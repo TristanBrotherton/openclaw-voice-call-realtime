@@ -254,6 +254,7 @@ Gateway RPCs are also available: `voicecall-tristan.initiate`, `.status`, `.tran
 | `callScreening.callerIdentity` | — | Default identity for screening/voicemail; per-call `caller_identity` overrides it |
 | `inboundPolicy` | `disabled` | `allowlist` + `allowFrom: ["+1555…"]` to accept inbound |
 | `summaryModel` | `gpt-4o-mini` | Chat model for end-of-call summaries |
+| `logTranscripts` | `false` | Log call content to gateway logs (off by default — calls contain personal data) |
 | `skipSignatureVerification` | `false` | Leave `false` in production |
 | `deviceProfiles` | `[]` | Per-caller response length / forbidden actions / instructions |
 
@@ -265,6 +266,8 @@ Gateway RPCs are also available: `voicecall-tristan.initiate`, `.status`, `.tran
 - The voice AI's only tools are call-control (hang up, record outcome, press keys) — it cannot touch your machine, files, or other OpenClaw tools from inside a call.
 - On third-party calls the AI is instructed not to volunteer private information beyond the call goal; add hard rules via `deviceProfiles[].forbiddenActions`.
 - Your Twilio auth token and OpenAI key live in your OpenClaw config — keep its permissions tight (`chmod 600`).
+- **Call content stays out of your logs by default.** Transcripts, partials, AI responses, and DTMF digits are logged as redacted lengths unless you opt in with `logTranscripts: true`. Transcript *files* (for `get_transcript`) are always written — they live in your call store, not the shared gateway log.
+- Media stream WebSocket frames are capped at 64KB (`maxPayload`), on top of pre-auth timeouts and per-IP connection limits.
 
 ## Troubleshooting
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026.7.8
+
+### Changes
+
+- Fixed `package-lock.json`: previous lockfile referenced local filesystem
+  paths and broke `npm ci` / `npm install` on other machines. The `openclaw`
+  dev dependency now resolves from the npm registry.
+- Privacy: call content (transcripts, partials, AI responses, DTMF digits,
+  tool arguments) is no longer written to gateway logs by default. Opt in
+  with `logTranscripts: true`. Transcript files are unaffected.
+- Hardening: media stream WebSocket server now sets `maxPayload: 64KB`.
+
 ## 2026.7.7 — Realtime Edition
 
 ### Changes

@@ -1166,6 +1166,10 @@
         "default": "gpt-4o-mini",
         "type": "string",
         "minLength": 1
+      },
+      "logTranscripts": {
+        "default": false,
+        "type": "boolean"
       }
     },
     "additionalProperties": false

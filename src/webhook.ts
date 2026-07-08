@@ -87,6 +87,14 @@ export class VoiceCallWebhookServer {
   }
 
   /**
+   * Render text for logs. Unless logTranscripts is enabled, only the length
+   * is logged — call content routinely includes personal data.
+   */
+  private loggableText(text: string): string {
+    return this.config.logTranscripts ? text : `<redacted, ${text.length} chars>`;
+  }
+
+  /**
    * Handle a function tool invoked by the realtime model during a call.
    */
   private async handleCallTool(
@@ -116,7 +124,9 @@ export class VoiceCallWebhookServer {
         }
         const tone = generateDtmfMulaw(digits);
         this.mediaStreamHandler?.sendRawAudio(streamSession.streamSid, tone);
-        console.log(`[voice-call] DTMF sent on ${providerCallId}: ${digits}`);
+        console.log(
+          `[voice-call] DTMF sent on ${providerCallId}: ${this.loggableText(digits)}`,
+        );
         return `Pressed ${digits}.`;
       }
 
@@ -222,7 +232,9 @@ export class VoiceCallWebhookServer {
         return true;
       },
       onTranscript: (providerCallId: string, transcript: string) => {
-        console.log(`[voice-call] Transcript for ${providerCallId}: ${transcript}`);
+        console.log(
+          `[voice-call] Transcript for ${providerCallId}: ${this.loggableText(transcript)}`,
+        );
 
         // STT mode only: clear queued TTS on barge-in.
         if (!isConversationMode && this.provider.name === "twilio") {
@@ -269,7 +281,9 @@ export class VoiceCallWebhookServer {
         }
       },
       onPartialTranscript: (callId: string, partial: string) => {
-        console.log(`[voice-call] Partial for ${callId}: ${partial}`);
+        if (this.config.logTranscripts) {
+          console.log(`[voice-call] Partial for ${callId}: ${partial}`);
+        }
       },
       onResponseTranscript: (providerCallId: string, transcript: string) => {
         const call = this.manager.getCallByProviderCallId(providerCallId);
@@ -830,7 +844,7 @@ export class VoiceCallWebhookServer {
       }
 
       if (result.text) {
-        console.log(`[voice-call] AI response: "${result.text}"`);
+        console.log(`[voice-call] AI response: ${this.loggableText(result.text)}`);
         await this.manager.speak(callId, result.text);
       }
     } catch (err) {

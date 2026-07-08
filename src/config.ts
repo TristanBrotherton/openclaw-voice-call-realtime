@@ -478,6 +478,14 @@ export const VoiceCallConfigSchema = z
 
     /** Model used to summarize call transcripts at call end (OpenAI chat model id) */
     summaryModel: z.string().min(1).default("gpt-4o-mini"),
+
+    /**
+     * Log call transcript content (user speech, AI responses, partials) to the
+     * gateway log. Off by default: phone calls routinely contain personal
+     * data. When false, only lengths are logged. Transcript files and
+     * summaries are unaffected.
+     */
+    logTranscripts: z.boolean().default(false),
   })
   .strict();
 

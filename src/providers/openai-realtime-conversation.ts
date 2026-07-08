@@ -387,7 +387,11 @@ class OpenAIRealtimeConversationSession implements RealtimeConversationSession {
     } catch {
       console.warn(`[RealtimeConversation] Tool call ${name} had unparseable arguments`);
     }
-    console.log(`[RealtimeConversation] Tool call: ${name}(${rawArguments.slice(0, 200)})`);
+    // Log the tool name only — arguments can contain call content (outcome
+    // details, goodbye lines, IVR digits), which is personal data.
+    console.log(
+      `[RealtimeConversation] Tool call: ${name} (${rawArguments.length} arg bytes)`,
+    );
     void this.onToolCallHandler(name, args)
       .catch((err): RealtimeToolResult => {
         const message = err instanceof Error ? err.message : String(err);

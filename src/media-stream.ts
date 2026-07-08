@@ -128,7 +128,9 @@ export class MediaStreamHandler {
    */
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
     if (!this.wss) {
-      this.wss = new WebSocketServer({ noServer: true });
+      // Twilio media messages are well under 1KB; a small cap bounds the
+      // memory/CPU an unauthenticated peer can force via oversized frames.
+      this.wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
       this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
     }
 
