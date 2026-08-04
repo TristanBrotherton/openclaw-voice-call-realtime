@@ -23,6 +23,8 @@ export type HomeAssistantConfig = {
   timeoutMs: number;
   /** Max entities returned by a status query. */
   maxResults: number;
+  /** Post-command state-settle polling (test override; defaults 2000/400ms). */
+  settle?: { maxWaitMs?: number; pollIntervalMs?: number };
 };
 
 type HaState = {
@@ -136,15 +138,73 @@ export async function controlHomeEntity(
       message: `Command "${command}" is not valid for ${domain}. Valid: ${HA_COMMANDS.join(", ")}.`,
     };
   }
+  let before: HaState | undefined;
+  try {
+    before = (await haFetch(config, `/api/states/${entityId}`)) as HaState;
+  } catch {
+    // confirmation still possible via target-state match below
+  }
   await haFetch(config, `/api/services/${domain}/${service}`, {
     method: "POST",
     body: { entity_id: entityId },
   });
-  // Read back the resulting state for confirmation.
-  try {
-    const after = (await haFetch(config, `/api/states/${entityId}`)) as HaState;
-    return { ok: true, message: `${label(after)}` };
-  } catch {
-    return { ok: true, message: `${entityId}: ${command} sent.` };
+  // HA acks a service call as soon as it is queued; the entity state can lag
+  // a second or two behind. An instant read-back can report the OLD state,
+  // which the voice model reads as a failed action (and then reports the call
+  // outcome as failed). Poll briefly until the state settles.
+  const target = TARGET_STATES[command.toLowerCase()];
+  const settle = config.settle ?? {};
+  const maxWaitMs = settle.maxWaitMs ?? 2000;
+  const pollIntervalMs = settle.pollIntervalMs ?? 400;
+  const deadline = Date.now() + maxWaitMs;
+  let last: HaState | undefined;
+  for (;;) {
+    try {
+      last = (await haFetch(config, `/api/states/${entityId}`)) as HaState;
+    } catch {
+      break;
+    }
+    const settled = target
+      ? matchesTargetState(last.state, target)
+      : !before?.state || last.state !== before.state;
+    if (settled && last.state) {
+      return { ok: true, message: `${label(last)}` };
+    }
+    if (Date.now() >= deadline) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
+  return {
+    ok: true,
+    message:
+      `${command} command accepted by Home Assistant` +
+      (last?.state ? ` (reading still shows: ${label(last)})` : "") +
+      ". Status readings lag a few seconds — treat the action as successful.",
+  };
+}
+
+/** Expected post-command entity state, where the command implies one. */
+const TARGET_STATES: Record<string, string | undefined> = {
+  on: "on",
+  off: "off",
+  lock: "locked",
+  unlock: "unlocked",
+  open: "open",
+  close: "closed",
+  toggle: undefined,
+};
+
+function matchesTargetState(state: string | undefined, target: string): boolean {
+  if (!state) {
+    return false;
+  }
+  // In-motion cover states count as confirmation: the device is acting.
+  if (target === "open" && state === "opening") {
+    return true;
+  }
+  if (target === "closed" && state === "closing") {
+    return true;
+  }
+  return state === target;
 }

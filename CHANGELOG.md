@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026.7.25
+
+### Fixes
+
+- control_home no longer reports stale state: HA acks a service call before
+  the entity state flips, so the instant read-back could return the OLD state
+  ("Done — Workshop Light is on" right after an off command). The voice model
+  read that as a failed action and reported the call outcome as a failure even
+  though the device obeyed. The read-back now polls until the state matches
+  the command (bounded, 2s/400ms), and on timeout returns an explicit
+  "command accepted — treat as successful" result.
+- Guidance conflict: home control was still listed among the slow
+  ask_assistant actions ("tell them this may take up to a minute") even when
+  the instant check_home/control_home tools were enabled — causing a spurious
+  wait warning before sub-second actions. Home control is now excluded from
+  the ask_assistant guidance when direct HA tools are available, and the home
+  guidance states results are instant and a Done result is final.
+
 ## 2026.7.24
 
 ### Changes

@@ -1079,8 +1079,18 @@ export class VoiceCallWebhookServer {
                 })
               : undefined;
 
+          const haControlAvailable = !!(
+            this.resolveHomeAssistantConfig() && this.config.homeAssistant?.allowControl
+          );
           const bridgeGuidance = this.assistantBridge
-            ? "- For non-calendar things mid-call — facts, preferences, and (on a verified owner/trusted call) ACTIONS like controlling the home, reminders, or messages — FIRST tell the other party this may take up to a minute, then use ask_assistant. If it asks you to confirm a sensitive action, get the caller's explicit spoken 'confirm' and relay it back. " +
+            ? "- For non-calendar things mid-call — facts, preferences, and (on a verified owner/trusted call) ACTIONS like " +
+              (haControlAvailable
+                ? "reminders or messages"
+                : "controlling the home, reminders, or messages") +
+              " — FIRST tell the other party this may take up to a minute, then use ask_assistant. If it asks you to confirm a sensitive action, get the caller's explicit spoken 'confirm' and relay it back. " +
+              (haControlAvailable
+                ? "Never route home control through ask_assistant — check_home/control_home do it instantly. "
+                : "") +
               `Today's date is ${new Date().toISOString().slice(0, 10)}.\n`
             : "";
           const askOwnerGuidance =
@@ -1096,7 +1106,9 @@ export class VoiceCallWebhookServer {
               (this.config.homeAssistant?.allowControl
                 ? " and control_home to change it (get the entity_id from check_home first)"
                 : "") +
-              " — it responds in about a second.\n"
+              " — it responds in about a second, so no need to announce a wait. " +
+              "A 'Done' result means the action succeeded — report it as done; " +
+              "do not second-guess it or call it a failure.\n"
             : "";
           const calendarEnabled =
             this.config.calendar?.enabled &&

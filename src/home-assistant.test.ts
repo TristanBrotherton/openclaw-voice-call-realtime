@@ -91,6 +91,58 @@ describe("controlHomeEntity", () => {
       expect.arrayContaining(["on", "off", "toggle", "lock", "unlock", "open", "close"]),
     );
   });
+
+  // Regression: HA acks a service call before the entity state flips. An
+  // instant read-back reported the OLD state ("Done — Workshop Light is on"
+  // after an off command), which the voice model treated as a failed action.
+  it("polls past a stale read-back until the state reflects the command", async () => {
+    const fastCfg = { ...cfg, settle: { maxWaitMs: 200, pollIntervalMs: 10 } };
+    let reads = 0;
+    mockFetch((url, init) => {
+      if ((init?.method ?? "GET") === "GET" && url.endsWith("/api/states/light.workshop")) {
+        reads += 1;
+        // pre-read + first post-command read still show "on"; then it settles
+        return {
+          entity_id: "light.workshop",
+          state: reads <= 2 ? "on" : "off",
+          attributes: { friendly_name: "Workshop Light" },
+        };
+      }
+      return {};
+    });
+    const r = await controlHomeEntity(fastCfg, "light.workshop", "off");
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("Workshop Light");
+    expect(r.message).toContain("off");
+    expect(r.message).not.toContain("is on");
+  });
+
+  it("reports confident acceptance when the state never settles in time", async () => {
+    const fastCfg = { ...cfg, settle: { maxWaitMs: 40, pollIntervalMs: 10 } };
+    mockFetch((url, init) => {
+      if ((init?.method ?? "GET") === "GET" && url.endsWith("/api/states/light.workshop")) {
+        return { entity_id: "light.workshop", state: "on", attributes: { friendly_name: "Workshop Light" } };
+      }
+      return {};
+    });
+    const r = await controlHomeEntity(fastCfg, "light.workshop", "off");
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("accepted");
+    expect(r.message).toContain("treat the action as successful");
+  });
+
+  it("confirms immediately when the entity is already in the target state", async () => {
+    mockFetch((url, init) => {
+      if ((init?.method ?? "GET") === "GET" && url.endsWith("/api/states/light.workshop")) {
+        return { entity_id: "light.workshop", state: "off", attributes: { friendly_name: "Workshop Light" } };
+      }
+      return {};
+    });
+    const r = await controlHomeEntity(cfg, "light.workshop", "off");
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("Workshop Light");
+    expect(r.message).toContain("off");
+  });
 });
 
 import { resolveCallParty } from "./assistant-bridge.js";
