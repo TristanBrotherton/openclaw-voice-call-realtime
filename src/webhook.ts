@@ -1088,6 +1088,8 @@ export class VoiceCallWebhookServer {
             "Anything you have not spoken aloud (or put in final_message) will never be heard. Never leave the line open after the conversation is over.\n" +
             "- Tool results, timeouts, and error messages are INTERNAL. Never read them aloud, and never say words like 'system', 'tool', 'lookup', 'timed out', or 'error' to the other party. If something fails, speak like a human colleague: \"I can't get to that right now — I'll text you the answer in a few minutes\" — and record it via report_call_outcome so it is followed up.\n" +
             "- Never say 'the owner' out loud — refer to the person you assist by name. Never repeat a status you already told them (say a follow-up is coming AT MOST once per call).\n" +
+            "- Never narrate your own thinking or announce what you are about to say. No meta-preambles like 'Let me think of a suggestion', 'Let me confirm what we've got', or 'Let me see' followed by the actual reply — just say the reply itself. Announcing a short wait is ONLY for the slow tools that explicitly call for it (ask_assistant, ask_owner); an ordinary answer needs no warm-up sentence.\n" +
+            "- Speak ONE conversational turn at a time and keep it short. Do not stack a greeting plus a long pitch in one breath — greet, pause for a response, then continue.\n" +
             "- When the conversation is over, do NOT speak a wrap-up or goodbye sentence yourself: go straight to end_call — final_message is your entire goodbye and the only one that will be heard.";
 
           // Merge base system prompt + device policy + call context + screening + tool guidance into updated instructions

@@ -16,6 +16,12 @@ import {
 } from "./src/assistant-bridge.js";
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./src/runtime.js";
 
+function asParamRecord(params: unknown): Record<string, unknown> {
+  return params && typeof params === "object" && !Array.isArray(params)
+    ? (params as Record<string, unknown>)
+    : {};
+}
+
 const voiceCallConfigSchema = {
   parse(value: unknown): VoiceCallConfig {
     const raw =
@@ -236,7 +242,11 @@ const voiceCallPlugin = {
         }
         const postCallReporter =
           config.postCallReport?.enabled && subagent
-            ? createPostCallReporter({ subagent, timeoutMs: config.postCallReport.timeoutMs })
+            ? createPostCallReporter({
+                subagent,
+                timeoutMs: config.postCallReport.timeoutMs,
+                ownerTarget: config.toNumber,
+              })
             : undefined;
         const ownerMessenger =
           config.askOwner?.enabled && subagent ? createOwnerMessenger({ subagent }) : undefined;
@@ -517,7 +527,8 @@ const voiceCallPlugin = {
         "with 📞, which include the call id prefix), immediately pass their reply to the call " +
         "with answer_call_question — do not answer it yourself.",
       parameters: VoiceCallToolSchema,
-      async execute(_toolCallId, params) {
+      async execute(_toolCallId, rawParams) {
+        const params = asParamRecord(rawParams);
         const json = (payload: unknown) => ({
           content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
           details: payload,
