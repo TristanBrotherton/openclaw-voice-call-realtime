@@ -183,6 +183,7 @@
     }
   },
   "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "properties": {
       "enabled": {
@@ -1412,6 +1413,30 @@
               "confirm-sensitive",
               "full"
             ]
+          },
+          "fastRecall": {
+            "default": {
+              "enabled": true,
+              "maxLines": 10
+            },
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "maxLines": {
+                "default": 10,
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "workspaceDir": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

@@ -659,6 +659,23 @@ export const VoiceCallConfigSchema = z
          * Third-party and unverified calls are ALWAYS questions-only regardless.
          */
         ownerActions: z.enum(["off", "confirm-sensitive", "full"]).default("confirm-sensitive"),
+        /**
+         * Bounded local memory lookup tried before the full agent bridge —
+         * answers "what's X's number"-class recall in about a second instead
+         * of a 10-40s agent turn. Offered ONLY on verified first-party /
+         * trusted-contact calls. A miss falls through to the full bridge; a
+         * hit that doesn't answer escalates via ask_assistant escalate:true.
+         */
+        fastRecall: z
+          .object({
+            enabled: z.boolean().default(true),
+            /** Max memory lines injected into the call context */
+            maxLines: z.number().int().positive().default(10),
+            /** Workspace dir searched (MEMORY.md + memory/*.md). Default ~/.openclaw/workspace */
+            workspaceDir: z.string().min(1).optional(),
+          })
+          .strict()
+          .prefault({ enabled: true, maxLines: 10 }),
       })
       .strict()
       .prefault({ enabled: false, timeoutMs: 60000, trustedNumbers: [] }),

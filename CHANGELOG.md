@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026.7.24
+
+### Changes
+
+- Fast recall for ask_assistant (`assistantBridge.fastRecall`, default on):
+  on verified owner/trusted calls, a bounded local grep of the OpenClaw
+  workspace memory (MEMORY.md + recent memory/*.md) is tried before the full
+  agent bridge — "what's X's number"-class questions answer in about a
+  second instead of 10-40s. Hits are deduped and capped (10 lines x 300
+  chars); a miss falls through to the full bridge; a hit that doesn't answer
+  escalates via the new ask_assistant `escalate:true` parameter. Never
+  offered on third-party or unverified calls (same invariant as the Home
+  Assistant tools). Modeled on upstream OpenClaw's realtime fast-context
+  resolver.
+
 ## 2026.7.23
 
 ### Changes

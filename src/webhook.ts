@@ -31,6 +31,7 @@ import {
   type HomeAssistantConfig,
 } from "./home-assistant.js";
 import { resolveCallParty } from "./assistant-bridge.js";
+import { buildFastRecallReply, searchLocalMemory } from "./fast-recall.js";
 import { createManagedRealtimeConversationSession } from "./providers/managed-realtime-conversation.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
 import type { TwilioProvider } from "./providers/twilio.js";
@@ -350,6 +351,30 @@ export class VoiceCallWebhookServer {
         }
         const call = this.manager.getCallByProviderCallId(providerCallId);
         const party = this.resolvePartyForCall(call);
+        // Fast path: bounded local memory grep before the full agent turn.
+        // Verified callers only — this is a judgment-free path into the
+        // owner's memory (same invariant as the Home Assistant tools).
+        // Misses fall through to the full bridge below; irrelevant hits come
+        // back via escalate:true, which skips this block.
+        const fastRecall = this.config.assistantBridge?.fastRecall;
+        const fastEligible =
+          fastRecall?.enabled &&
+          args.escalate !== true &&
+          (party === "first-party" || party === "trusted-contact");
+        if (fastEligible && fastRecall) {
+          try {
+            const lines = searchLocalMemory(question, fastRecall);
+            if (lines.length > 0) {
+              console.log(
+                `[voice-call] ask_assistant fast recall hit (${lines.length} lines) for ${providerCallId}`,
+              );
+              return buildFastRecallReply(question, lines);
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.warn(`[voice-call] fast recall failed, using full bridge: ${message}`);
+          }
+        }
         const context = [
           call?.direction === "inbound" ? `inbound call from ${call.from}` : `outbound call to ${call?.to ?? "unknown"}`,
           `party: ${party}`,
@@ -836,7 +861,9 @@ export class VoiceCallWebhookServer {
                   "smart home, add reminders, send a message, etc.); the assistant " +
                   "enforces what is allowed and may ask you to get spoken confirmation " +
                   "for sensitive actions. Takes 10-40 seconds: tell the other party " +
-                  "you need a moment BEFORE calling this. One request at a time.",
+                  "you need a moment BEFORE calling this. On verified calls a simple " +
+                  "recall question may instead return an instant quick-memory result; " +
+                  "follow the instructions that come with it. One request at a time.",
                 parameters: {
                   type: "object",
                   properties: {
@@ -845,6 +872,12 @@ export class VoiceCallWebhookServer {
                       description:
                         "The specific question, with any needed context, e.g. " +
                         "'Is Wednesday July 15 free between 2 and 4pm?'",
+                    },
+                    escalate: {
+                      type: "boolean",
+                      description:
+                        "Set true ONLY when a previous quick-memory result for this " +
+                        "same question did not answer it — forces the full assistant.",
                     },
                   },
                   required: ["question"],
