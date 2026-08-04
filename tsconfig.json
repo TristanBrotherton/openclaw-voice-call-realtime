@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "es2023",
+    "types": ["node"],
+    "verbatimModuleSyntax": true
+  },
+  "include": ["index.ts", "src/**/*.ts"]
+}

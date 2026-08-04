@@ -42,7 +42,7 @@ describe("call outcome recording", () => {
 
     const ok = manager.recordCallOutcome("request-uuid", {
       status: "success",
-      details: "Table for 2 booked Friday 7pm under Tristan. Confirmation #4821.",
+      details: "Table for 2 booked Friday 7pm under Alex. Confirmation #4821.",
     });
     expect(ok).toBe(true);
 

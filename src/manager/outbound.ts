@@ -6,6 +6,7 @@ import {
   type CallRecord,
   type OutboundCallOptions,
 } from "../types.js";
+import { resolvePreferredTtsVoice } from "../tts-provider-voice.js";
 import { mapVoiceToPolly } from "../voice-mapping.js";
 import type { CallManagerContext } from "./context.js";
 import { getCallByProviderCallId } from "./lookup.js";
@@ -164,7 +165,7 @@ export async function initiateCall(
     // For notify mode with a message, use inline TwiML with <Say>.
     let inlineTwiml: string | undefined;
     if (mode === "notify" && initialMessage) {
-      const pollyVoice = mapVoiceToPolly(ctx.config.tts?.openai?.voice);
+      const pollyVoice = mapVoiceToPolly(resolvePreferredTtsVoice(ctx.config));
       inlineTwiml = generateNotifyTwiml(initialMessage, pollyVoice);
       console.log(`[voice-call] Using inline TwiML for notify mode (voice: ${pollyVoice})`);
     }
@@ -217,7 +218,7 @@ export async function speak(
 
     addTranscriptEntry(call, "bot", text);
 
-    const voice = provider.name === "twilio" ? ctx.config.tts?.openai?.voice : undefined;
+    const voice = provider.name === "twilio" ? resolvePreferredTtsVoice(ctx.config) : undefined;
     await provider.playTts({
       callId,
       providerCallId,

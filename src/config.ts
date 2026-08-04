@@ -331,7 +331,9 @@ export const VoiceCallStreamingConfigSchema = z
     disconnectGraceMs: z.number().int().nonnegative().default(45000),
   })
   .strict()
-  .default({
+  // prefault (not default): zod4 .default() returns the value unparsed, which
+  // would skip the nested field defaults below when the section is absent.
+  .prefault({
     enabled: false,
     sttProvider: "openai-realtime",
     sttModel: "gpt-4o-transcribe",
@@ -659,7 +661,7 @@ export const VoiceCallConfigSchema = z
         ownerActions: z.enum(["off", "confirm-sensitive", "full"]).default("confirm-sensitive"),
       })
       .strict()
-      .default({ enabled: false, timeoutMs: 60000, trustedNumbers: [] }),
+      .prefault({ enabled: false, timeoutMs: 60000, trustedNumbers: [] }),
 
     calendar: z
       .object({

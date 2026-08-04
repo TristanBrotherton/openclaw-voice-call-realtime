@@ -173,8 +173,9 @@ function resolveDeviceProfile(config: VoiceCallConfig, params?: { deviceId?: str
       return byId;
     }
   }
-  if (params?.from) {
-    return profiles.find((profile) => profile.match?.phoneNumbers?.includes(params.from));
+  const from = params?.from;
+  if (from) {
+    return profiles.find((profile) => profile.match?.phoneNumbers?.includes(from));
   }
   return undefined;
 }

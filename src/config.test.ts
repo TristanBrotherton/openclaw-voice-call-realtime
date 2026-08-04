@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { validateProviderConfig, resolveVoiceCallConfig, type VoiceCallConfig } from "./config.js";
+import {
+  validateProviderConfig,
+  resolveVoiceCallConfig,
+  VoiceCallConfigSchema,
+  type VoiceCallConfig,
+} from "./config.js";
 
 function createBaseConfig(provider: "telnyx" | "twilio" | "plivo" | "mock"): VoiceCallConfig {
-  return {
+  // Parse through the schema so sections with defaults stay in sync with config.ts.
+  return VoiceCallConfigSchema.parse({
     enabled: true,
     provider,
     fromNumber: "+15550001234",
@@ -31,21 +37,34 @@ function createBaseConfig(provider: "telnyx" | "twilio" | "plivo" | "mock"): Voi
       realtimeVoice: "alloy",
       silenceDurationMs: 800,
       vadThreshold: 0.5,
+      turnDetection: "server_vad",
+      vadEagerness: "auto",
       streamPath: "/voice/stream",
+      realtimePolicy: {
+        enabled: true,
+        connectOnStreamStart: true,
+        closeOnStreamDisconnect: true,
+        closeAfterAssistantDone: false,
+        idleTimeoutMs: 120000,
+        maxSessionMs: 7200000,
+        maxReconnectAttempts: 5,
+        reconnectBackoffMs: 1000,
+      },
       preStartTimeoutMs: 5000,
       maxPendingConnections: 32,
       maxPendingConnectionsPerIp: 4,
       maxConnections: 128,
+      disconnectGraceMs: 45000,
     },
     skipSignatureVerification: false,
     stt: { provider: "openai", model: "whisper-1" },
     tts: {
       provider: "openai",
-      openai: { model: "gpt-4o-mini-tts", voice: "coral" },
+      providers: { openai: { model: "gpt-4o-mini-tts", voice: "coral" } },
     },
     responseModel: "openai/gpt-4o-mini",
     responseTimeoutMs: 30000,
-  };
+  });
 }
 
 describe("validateProviderConfig", () => {

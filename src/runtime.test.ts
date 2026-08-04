@@ -45,6 +45,8 @@ vi.mock("./webhook/tailscale.js", () => ({
 import { createVoiceCallRuntime } from "./runtime.js";
 
 function createBaseConfig(): VoiceCallConfig {
+  // Partial fixture: every consumer of this config is mocked in this file, so
+  // sections with schema defaults are omitted rather than hand-maintained.
   return {
     enabled: true,
     provider: "mock",
@@ -74,21 +76,34 @@ function createBaseConfig(): VoiceCallConfig {
       realtimeVoice: "alloy",
       silenceDurationMs: 800,
       vadThreshold: 0.5,
+      turnDetection: "server_vad",
+      vadEagerness: "auto",
       streamPath: "/voice/stream",
+      realtimePolicy: {
+        enabled: true,
+        connectOnStreamStart: true,
+        closeOnStreamDisconnect: true,
+        closeAfterAssistantDone: false,
+        idleTimeoutMs: 120000,
+        maxSessionMs: 7200000,
+        maxReconnectAttempts: 5,
+        reconnectBackoffMs: 1000,
+      },
       preStartTimeoutMs: 5000,
       maxPendingConnections: 32,
       maxPendingConnectionsPerIp: 4,
       maxConnections: 128,
+      disconnectGraceMs: 45000,
     },
     skipSignatureVerification: false,
     stt: { provider: "openai", model: "whisper-1" },
     tts: {
       provider: "openai",
-      openai: { model: "gpt-4o-mini-tts", voice: "coral" },
+      providers: { openai: { model: "gpt-4o-mini-tts", voice: "coral" } },
     },
     responseModel: "openai/gpt-4o-mini",
     responseTimeoutMs: 30000,
-  };
+  } as unknown as VoiceCallConfig;
 }
 
 describe("createVoiceCallRuntime lifecycle", () => {

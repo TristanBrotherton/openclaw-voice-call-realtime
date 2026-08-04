@@ -6,9 +6,11 @@ import { createTelephonyTtsProvider } from "./telephony-tts.js";
 function createCoreConfig(): CoreConfig {
   const tts: VoiceCallTtsConfig = {
     provider: "openai",
-    openai: {
-      model: "gpt-4o-mini-tts",
-      voice: "alloy",
+    providers: {
+      openai: {
+        model: "gpt-4o-mini-tts",
+        voice: "alloy",
+      },
     },
   };
   return { messages: { tts } };
@@ -43,33 +45,33 @@ afterEach(() => {
 describe("createTelephonyTtsProvider deepMerge hardening", () => {
   it("merges safe nested overrides", async () => {
     const tts = await mergeOverride({
-      openai: { voice: "coral" },
+      providers: { openai: { voice: "coral" } },
     });
-    const openai = tts.openai as Record<string, unknown>;
+    const providers = tts.providers as Record<string, Record<string, unknown>>;
 
-    expect(openai.voice).toBe("coral");
-    expect(openai.model).toBe("gpt-4o-mini-tts");
+    expect(providers.openai?.voice).toBe("coral");
+    expect(providers.openai?.model).toBe("gpt-4o-mini-tts");
   });
 
   it("blocks top-level __proto__ keys", async () => {
     const tts = await mergeOverride(
-      JSON.parse('{"__proto__":{"polluted":"top"},"openai":{"voice":"coral"}}'),
+      JSON.parse('{"__proto__":{"polluted":"top"},"providers":{"openai":{"voice":"coral"}}}'),
     );
-    const openai = tts.openai as Record<string, unknown>;
+    const providers = tts.providers as Record<string, Record<string, unknown>>;
 
     expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
     expect(tts.polluted).toBeUndefined();
-    expect(openai.voice).toBe("coral");
+    expect(providers.openai?.voice).toBe("coral");
   });
 
   it("blocks nested __proto__ keys", async () => {
     const tts = await mergeOverride(
-      JSON.parse('{"openai":{"model":"safe","__proto__":{"polluted":"nested"}}}'),
+      JSON.parse('{"providers":{"openai":{"model":"safe","__proto__":{"polluted":"nested"}}}}'),
     );
-    const openai = tts.openai as Record<string, unknown>;
+    const providers = tts.providers as Record<string, Record<string, unknown>>;
 
     expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
-    expect(openai.polluted).toBeUndefined();
-    expect(openai.model).toBe("safe");
+    expect(providers.openai?.polluted).toBeUndefined();
+    expect(providers.openai?.model).toBe("safe");
   });
 });

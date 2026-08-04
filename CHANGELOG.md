@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026.7.23
+
+### Changes
+
+- Strict-typecheck clean: added `tsconfig.json` (strict, NodeNext) and fixed
+  every error under it. `npx tsc --noEmit` is now part of the audit surface.
+- Fixed a latent config bug: two zod object defaults (`streaming`, `askOwner`)
+  used `.default()`, which in zod v4 returns the value unparsed — a config
+  file without those sections would be missing nested defaults
+  (`streaming.turnDetection`, `streaming.realtimePolicy`,
+  `askOwner.ownerActions`, ...). Switched to `.prefault()` so nested defaults
+  always apply.
+- Fixed dead TTS voice resolution: the SDK's TtsConfigSchema no longer has a
+  top-level `openai` block (voice settings live under `tts.providers.<id>`),
+  so `config.tts?.openai?.voice` always resolved undefined and notify-mode
+  calls silently fell back to the default Polly voice. Ported upstream's
+  `resolvePreferredTtsVoice` helper (`src/tts-provider-voice.ts`).
+- Test fixtures updated to the current schema shapes; config fixture now
+  parses through `VoiceCallConfigSchema` so it can't drift again.
+
+## 2026.7.22
+
+### Changes
+
+- Post-call reports now pin the delivery target: when `toNumber` is set, the
+  briefed agent is told to report to exactly that recipient via iMessage and
+  never to infer the recipient from allowlists, contacts, or recent sessions.
+- Voice prompt etiquette: no meta-preambles ("Let me think of a suggestion"),
+  no narrating what it is about to say, one conversational turn at a time —
+  greet, pause, then continue instead of stacking greeting + pitch.
+
 ## 2026.7.21
 
 ### Changes
