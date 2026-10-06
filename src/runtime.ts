@@ -255,31 +255,31 @@ export async function createVoiceCallRuntime(params: {
       const twilioProvider = provider as TwilioProvider;
       const isConversationMode = config.streaming.sttProvider === "openai-realtime-conversation";
 
-      // In conversation mode OpenAI handles TTS directly; skip telephony TTS provider.
-      if (!isConversationMode) {
-        if (ttsRuntime?.textToSpeechTelephony) {
-          try {
-            const ttsProvider = createTelephonyTtsProvider({
-              coreConfig,
-              ttsOverride: config.tts,
-              runtime: ttsRuntime,
-            });
-            twilioProvider.setTTSProvider(ttsProvider);
-            log.info("[voice-call] Telephony TTS provider configured");
-          } catch (err) {
-            log.warn(
-              `[voice-call] Failed to initialize telephony TTS: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          }
-        } else {
-          log.warn("[voice-call] Telephony TTS unavailable; streaming TTS disabled");
+      // Conversation mode normally uses OpenAI Realtime voice, but the
+      // telephony TTS provider remains available as an independent fallback
+      // for a closing line if Realtime produces no response.
+      if (ttsRuntime?.textToSpeechTelephony) {
+        try {
+          const ttsProvider = createTelephonyTtsProvider({
+            coreConfig,
+            ttsOverride: config.tts,
+            runtime: ttsRuntime,
+          });
+          twilioProvider.setTTSProvider(ttsProvider);
+          log.info(
+            isConversationMode
+              ? "[voice-call] Telephony TTS fallback configured for conversation mode"
+              : "[voice-call] Telephony TTS provider configured",
+          );
+        } catch (err) {
+          log.warn(
+            `[voice-call] Failed to initialize telephony TTS: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
         }
       } else {
-        log.info(
-          "[voice-call] Conversation mode: TTS handled by OpenAI Realtime; skipping telephony TTS",
-        );
+        log.warn("[voice-call] Telephony TTS unavailable; streaming TTS disabled");
       }
 
       const mediaHandler = webhookServer.getMediaStreamHandler();

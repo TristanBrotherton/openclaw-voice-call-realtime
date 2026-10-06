@@ -671,6 +671,21 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   /**
+   * Bypass the realtime conversation session and synthesize directly into the
+   * existing Twilio media stream. This keeps <Connect><Stream> alive and gives
+   * graceful hangup a deterministic fallback when Realtime fails to produce a
+   * closing response.
+   */
+  async playTtsFallback(input: PlayTtsInput): Promise<boolean> {
+    const streamSid = this.callStreamMap.get(input.providerCallId);
+    if (!streamSid || !this.ttsProvider || !this.mediaStreamHandler) {
+      return false;
+    }
+    await this.playTtsViaStream(input.text, streamSid);
+    return true;
+  }
+
+  /**
    * Play TTS via core TTS and Twilio Media Streams.
    * Generates audio with core TTS, converts to mu-law, and streams via WebSocket.
    * Uses a queue to serialize playback and prevent overlapping audio.

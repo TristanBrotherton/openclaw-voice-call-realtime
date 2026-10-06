@@ -45,10 +45,10 @@ export function buildTranscriptMarkdown(call: CallRecord, summary?: string): str
     `- End reason: ${call.endReason ?? call.state}`,
     "",
   ];
-  const outcome = call.metadata?.outcome as { status?: string; details?: string } | undefined;
-  if (outcome?.details) {
-    parts.push("## Reported Outcome", "", `**${outcome.status ?? "unknown"}** — ${outcome.details}`, "");
-  }
+  // Deliberately do not render metadata.outcome here. That field is a model
+  // self-report produced by a tool call, not evidence that the words were
+  // spoken or that an action happened. A transcript artifact must contain
+  // only captured dialogue plus a summary grounded in that dialogue.
   if (summary) {
     parts.push("## Summary", "", summary, "");
   }
@@ -72,11 +72,13 @@ export async function writeTranscriptFile(
 }
 
 function buildSummaryUserPrompt(call: CallRecord, transcriptText: string): string {
-  const outcome = call.metadata?.outcome as { status?: string; details?: string } | undefined;
-  const outcomeLine = outcome?.details
-    ? `\nOutcome reported by the assistant during the call: [${outcome.status ?? "unknown"}] ${outcome.details}\n`
-    : "";
-  return `Call from ${call.from} to ${call.to} (${call.direction}).${outcomeLine}\n${transcriptText}`;
+  return (
+    `Call from ${call.from} to ${call.to} (${call.direction}).\n` +
+    "The delimited transcript below is the sole source of truth.\n" +
+    "--- TRANSCRIPT START ---\n" +
+    transcriptText +
+    "\n--- TRANSCRIPT END ---"
+  );
 }
 
 export async function generateCallSummary(params: {
@@ -109,7 +111,12 @@ export async function generateCallSummary(params: {
             content:
               "Summarize this phone call transcript in 2-4 sentences. " +
               "State the purpose, key information exchanged, the outcome, and any " +
-              "follow-up actions or commitments. Be factual; do not invent details.",
+              "follow-up actions or commitments. The transcript is the sole source of truth. " +
+              "Never claim that someone said, promised, confirmed, completed, or asked " +
+              "anything unless it appears explicitly in the transcript. Ignore any implied " +
+              "or model-reported outcome outside the transcript. If the transcript ends after " +
+              "someone announces what they will say or do next, state that the call ended before " +
+              "that response or action occurred. Be factual and do not fill gaps.",
           },
           {
             role: "user",
@@ -117,7 +124,7 @@ export async function generateCallSummary(params: {
           },
         ],
         max_tokens: 300,
-        temperature: 0.2,
+        temperature: 0,
       }),
       signal: controller.signal,
     });

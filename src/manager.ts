@@ -316,6 +316,7 @@ export class CallManager {
         call.metadata = {
           ...(call.metadata ?? {}),
           ...(summary && { summary }),
+          ...(summary && { summarySource: "transcript-only-v2" }),
           transcriptPath: filePath,
         };
         persistCallRecord(this.storePath, call);
@@ -335,8 +336,18 @@ export class CallManager {
               : {}),
             endReason: call.endReason ?? call.state,
             ...(typeof metadata.answeredBy === "string" ? { answeredBy: metadata.answeredBy } : {}),
-            ...(metadata.outcome ? { outcome: metadata.outcome as { status: string; details: string } } : {}),
             ...(summary ? { summary } : {}),
+            ...(metadata.finalMessageDelivery
+              ? {
+                  finalMessageDelivery: metadata.finalMessageDelivery as {
+                    verified: boolean;
+                    responseCycle?: string;
+                    transcriptCaptured?: boolean;
+                    playoutDrained?: boolean;
+                    fallbackUsed?: boolean;
+                  },
+                }
+              : {}),
             transcriptPath: filePath,
           };
           console.log(`[voice-call] Dispatching post-call report for ${call.callId}`);
@@ -398,7 +409,12 @@ export class CallManager {
         callId: string;
         state: string;
         summary?: string;
-        outcome?: { status: string; details: string };
+        reportedOutcome?: {
+          status: string;
+          details: string;
+          unverified: true;
+          note: string;
+        };
         transcript: CallRecord["transcript"];
         transcriptPath?: string;
       }
@@ -413,8 +429,19 @@ export class CallManager {
     return {
       callId: call.callId,
       state: call.state,
-      summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
-      outcome: metadata.outcome as { status: string; details: string } | undefined,
+      // Summaries created before transcript-only-v2 were allowed to ingest the
+      // model's self-reported outcome and may therefore contain unspoken facts.
+      summary:
+        metadata.summarySource === "transcript-only-v2" && typeof metadata.summary === "string"
+          ? metadata.summary
+          : undefined,
+      reportedOutcome: metadata.outcome
+        ? {
+            ...(metadata.outcome as { status: string; details: string }),
+            unverified: true,
+            note: "Model-reported metadata; not part of the captured transcript.",
+          }
+        : undefined,
       transcript: call.transcript,
       transcriptPath:
         typeof metadata.transcriptPath === "string" ? metadata.transcriptPath : storedPath,

@@ -18,10 +18,18 @@ describe("post-call report", () => {
       answeredBy: "human",
       outcome: { status: "success", details: "Booked for 2, Friday 7pm" },
       summary: "Reservation confirmed.",
+      finalMessageDelivery: {
+        verified: false,
+        responseCycle: "not-started",
+        transcriptCaptured: false,
+        playoutDrained: true,
+      },
       transcriptPath: "/tmp/x.md",
     });
     expect(msg).toContain("outbound with +15550005555");
-    expect(msg).toContain("[success] Booked for 2, Friday 7pm");
+    expect(msg).not.toContain("[success] Booked for 2, Friday 7pm");
+    expect(msg).toContain("Summary: Reservation confirmed.");
+    expect(msg).toContain("Delivery warning:");
     expect(msg).toContain("Talk time: 95s");
     expect(msg).toContain("do it and mention that you did");
   });

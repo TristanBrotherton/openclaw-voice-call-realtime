@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026.9.29
+
+### Fixes
+
+- Post-call summaries and transcript artifacts now use captured dialogue as
+  their sole source of truth. Realtime `report_call_outcome` metadata remains
+  available as explicitly unverified diagnostic data, but can no longer make
+  owner reports claim that unspoken words or actions occurred.
+- Graceful hangup now verifies that the final message started, appeared in the
+  bot transcript, and drained through Twilio before disconnecting. A missing
+  Realtime response is retried once, then falls back to direct telephony TTS;
+  unverifiable delivery is recorded and surfaced as a warning.
+- OpenClaw 2026.9 may register a plugin more than once in one gateway process.
+  Registrations now share one runtime per bind/port through `globalThis`,
+  preventing a second runtime from failing with `EADDRINUSE`.
+- Agent tool actions dispatch through the canonical gateway methods, including
+  owner-question replies, so a cold-loaded standalone plugin registry reuses
+  the live runtime instead of constructing another one.
+
+### Audit
+
+- Strict typecheck passes, 188 tests pass, the production dependency audit has
+  zero vulnerabilities, and the publication diff contains no secrets or
+  household-specific values.
+
 ## 2026.7.25
 
 ### Fixes

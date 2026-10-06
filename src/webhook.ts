@@ -494,8 +494,7 @@ export class VoiceCallWebhookServer {
 
       case "end_call": {
         const reason = typeof args.reason === "string" ? args.reason : "conversation complete";
-        const finalMessage =
-          typeof args.final_message === "string" ? args.final_message.trim() : "";
+        const finalMessage = resolveFinalMessage(args.final_message);
         console.log(`[voice-call] Model requested end_call (${reason}) on ${providerCallId}`);
         // From here on the call is wrapping up: disable barge-in so the other
         // party talking over the goodbye cannot cancel it or flush its audio.
@@ -551,24 +550,113 @@ export class VoiceCallWebhookServer {
     // mid-word otherwise.
     await waitWhileResponding(15000);
 
-    // Then speak the closing line and wait for it to finish generating.
+    const callBeforeGoodbye = this.manager.getCallByProviderCallId(providerCallId);
+    const botTranscriptCountBefore =
+      callBeforeGoodbye?.transcript.filter((entry) => entry.speaker === "bot").length ?? 0;
+    let responseCycle: "completed" | "not-started" | "timed-out" = "not-started";
+    let fallbackUsed = false;
+
+    // Then speak the closing line and prove that a response actually started
+    // and finished. Previously, a failed/empty response fell through to a
+    // Twilio mark on an empty buffer, which looked "drained" and caused an
+    // abrupt hangup with no goodbye.
     if (opts?.finalMessage) {
       session.say(opts.finalMessage);
-      const start = Date.now();
-      while (!session.isResponseActive() && Date.now() - start < 3000) {
-        await sleep(100);
+      responseCycle = await waitForRealtimeResponseCycle(session);
+      if (responseCycle === "not-started") {
+        console.warn(
+          `[voice-call] Goodbye response did not start on ${providerCallId}; retrying once`,
+        );
+        session.say(opts.finalMessage);
+        responseCycle = await waitForRealtimeResponseCycle(session);
       }
-      await waitWhileResponding(15000);
+    }
+
+    const callAfterRealtime = this.manager.getCallByProviderCallId(providerCallId);
+    const transcriptDeadline = Date.now() + 2000;
+    while (
+      opts?.finalMessage &&
+      responseCycle === "completed" &&
+      callAfterRealtime &&
+      callAfterRealtime.transcript.filter((entry) => entry.speaker === "bot").length <=
+        botTranscriptCountBefore &&
+      Date.now() < transcriptDeadline
+    ) {
+      await sleep(100);
+    }
+    let goodbyeCaptured =
+      !!opts?.finalMessage &&
+      !!callAfterRealtime &&
+      callAfterRealtime.transcript.filter((entry) => entry.speaker === "bot").length >
+        botTranscriptCountBefore;
+
+    // If Realtime did not produce a complete, captured closing response, stop
+    // that session and synthesize the exact closing line directly into the
+    // existing Twilio media stream. This avoids both an abrupt hangup and a
+    // competing late Realtime response.
+    if (opts?.finalMessage && (responseCycle !== "completed" || !goodbyeCaptured)) {
+      session.close("goodbye_fallback");
+      const fallbackPlayed = await this.provider
+        .playTtsFallback?.({
+          callId: callAfterRealtime?.callId ?? providerCallId,
+          providerCallId,
+          text: opts.finalMessage,
+        })
+        .catch((err) => {
+          console.warn(
+            `[voice-call] Closing-message TTS fallback failed on ${providerCallId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          return false;
+        });
+      if (fallbackPlayed && callAfterRealtime) {
+        fallbackUsed = true;
+        this.manager.processEvent({
+          id: `closing-fallback-${Date.now()}`,
+          type: "call.speaking",
+          callId: callAfterRealtime.callId,
+          providerCallId,
+          timestamp: Date.now(),
+          text: opts.finalMessage,
+        });
+        goodbyeCaptured = true;
+      }
     }
 
     // Then wait for the audio already sent to Twilio to actually play out.
     const streamSession = this.mediaStreamHandler?.getSessionByCallId(providerCallId);
+    let playoutDrained = false;
     if (streamSession && this.mediaStreamHandler) {
-      await this.mediaStreamHandler.waitForPlayoutDrained(streamSession.streamSid, 10000);
+      playoutDrained = await this.mediaStreamHandler.waitForPlayoutDrained(
+        streamSession.streamSid,
+        10000,
+      );
     }
 
     const call = this.manager.getCallByProviderCallId(providerCallId);
     if (call) {
+      const verified =
+        !!opts?.finalMessage &&
+        (responseCycle === "completed" || fallbackUsed) &&
+        goodbyeCaptured &&
+        playoutDrained;
+      call.metadata = {
+        ...(call.metadata ?? {}),
+        finalMessageDelivery: {
+          verified,
+          responseCycle,
+          transcriptCaptured: goodbyeCaptured,
+          playoutDrained,
+          fallbackUsed,
+        },
+      };
+      if (!verified) {
+        console.warn(
+          `[voice-call] Goodbye delivery was not verified on ${providerCallId} ` +
+            `(response=${responseCycle}, transcript=${goodbyeCaptured}, playout=${playoutDrained})`,
+        );
+      }
       console.log(`[voice-call] Hanging up ${call.callId} after graceful end_call`);
       await this.manager.endCall(call.callId);
     }
@@ -1235,8 +1323,9 @@ export class VoiceCallWebhookServer {
         if (err.code === "EADDRINUSE") {
           console.error(
             `[voice-call] EADDRINUSE: port ${port} is already bound on ${bind}. ` +
-              `This usually means the built-in voice-call extension is running alongside ` +
-              `this custom fork. Disable it with: plugins.entries.voice-call.enabled = false`,
+              `Another voice-call runtime already owns this port — either a second plugin ` +
+              `registration in this gateway process that is not sharing the runtime slot, ` +
+              `or another process (check: lsof -nP -iTCP:${port} -sTCP:LISTEN).`,
           );
         }
         reject(err);
@@ -1541,4 +1630,34 @@ export class VoiceCallWebhookServer {
       console.error(`[voice-call] Auto-response error:`, err);
     }
   }
+}
+
+export function resolveFinalMessage(value: unknown): string {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return "Thank you. Goodbye.";
+}
+export async function waitForRealtimeResponseCycle(
+  session: { isResponseActive(): boolean },
+  opts: { startTimeoutMs?: number; finishTimeoutMs?: number; pollMs?: number } = {},
+): Promise<"completed" | "not-started" | "timed-out"> {
+  const startTimeoutMs = opts.startTimeoutMs ?? 3000;
+  const finishTimeoutMs = opts.finishTimeoutMs ?? 15000;
+  const pollMs = opts.pollMs ?? 100;
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  const startDeadline = Date.now() + startTimeoutMs;
+  while (!session.isResponseActive() && Date.now() < startDeadline) {
+    await sleep(pollMs);
+  }
+  if (!session.isResponseActive()) {
+    return "not-started";
+  }
+
+  const finishDeadline = Date.now() + finishTimeoutMs;
+  while (session.isResponseActive() && Date.now() < finishDeadline) {
+    await sleep(pollMs);
+  }
+  return session.isResponseActive() ? "timed-out" : "completed";
 }

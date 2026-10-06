@@ -260,6 +260,13 @@ export type CallReport = {
   answeredBy?: string;
   outcome?: { status: string; details: string };
   summary?: string;
+  finalMessageDelivery?: {
+    verified: boolean;
+    responseCycle?: string;
+    transcriptCaptured?: boolean;
+    playoutDrained?: boolean;
+    fallbackUsed?: boolean;
+  };
   transcriptPath?: string;
 };
 
@@ -283,8 +290,15 @@ export function buildCallReportMessage(report: CallReport, ownerTarget?: string)
     ...(report.durationSec !== undefined ? [`Talk time: ${report.durationSec}s`] : []),
     `Ended: ${report.endReason ?? "unknown"}`,
     ...(report.answeredBy ? [`Answered by: ${report.answeredBy}`] : []),
-    ...(report.outcome ? [`Reported outcome: [${report.outcome.status}] ${report.outcome.details}`] : []),
+    // Do not surface report.outcome to the owner-facing agent. It is a realtime
+    // model self-report and can describe speech or actions that never occurred.
+    // The transcript-grounded summary and full transcript are authoritative.
     ...(report.summary ? [`Summary: ${report.summary}`] : []),
+    ...(report.finalMessageDelivery && !report.finalMessageDelivery.verified
+      ? [
+          "Delivery warning: the closing message was not verified as generated, captured, and played before hangup. Do not claim that a goodbye or any intended final response was heard.",
+        ]
+      : []),
     ...(report.transcriptPath ? [`Full transcript: ${report.transcriptPath}`] : []),
     `Call ID: ${report.callId}`,
   ];

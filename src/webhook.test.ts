@@ -3,7 +3,11 @@ import { VoiceCallConfigSchema, type VoiceCallConfig } from "./config.js";
 import type { CallManager } from "./manager.js";
 import type { VoiceCallProvider } from "./providers/base.js";
 import type { CallRecord } from "./types.js";
-import { VoiceCallWebhookServer } from "./webhook.js";
+import {
+  resolveFinalMessage,
+  VoiceCallWebhookServer,
+  waitForRealtimeResponseCycle,
+} from "./webhook.js";
 
 const provider: VoiceCallProvider = {
   name: "mock",
@@ -42,6 +46,51 @@ const createCall = (startedAt: number): CallRecord => ({
   startedAt,
   transcript: [],
   processedEventIds: [],
+});
+
+describe("goodbye response verification", () => {
+  it("supplies a polite closing line when the model omits one", () => {
+    expect(resolveFinalMessage(undefined)).toBe("Thank you. Goodbye.");
+    expect(resolveFinalMessage("   ")).toBe("Thank you. Goodbye.");
+    expect(resolveFinalMessage("Thanks for your help. Goodbye.")).toBe(
+      "Thanks for your help. Goodbye.",
+    );
+  });
+
+  it("requires a response to start and finish", async () => {
+    let active = false;
+    setTimeout(() => {
+      active = true;
+    }, 5);
+    setTimeout(() => {
+      active = false;
+    }, 15);
+
+    await expect(
+      waitForRealtimeResponseCycle(
+        { isResponseActive: () => active },
+        { startTimeoutMs: 50, finishTimeoutMs: 50, pollMs: 2 },
+      ),
+    ).resolves.toBe("completed");
+  });
+
+  it("detects when the goodbye response never starts", async () => {
+    await expect(
+      waitForRealtimeResponseCycle(
+        { isResponseActive: () => false },
+        { startTimeoutMs: 10, finishTimeoutMs: 10, pollMs: 2 },
+      ),
+    ).resolves.toBe("not-started");
+  });
+
+  it("detects a response that never finishes", async () => {
+    await expect(
+      waitForRealtimeResponseCycle(
+        { isResponseActive: () => true },
+        { startTimeoutMs: 10, finishTimeoutMs: 10, pollMs: 2 },
+      ),
+    ).resolves.toBe("timed-out");
+  });
 });
 
 const createManager = (calls: CallRecord[]) => {

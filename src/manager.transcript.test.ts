@@ -1,6 +1,60 @@
 import fs from "node:fs";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createManagerHarness, markCallAnswered } from "./manager.test-harness.js";
+import { generateCallSummary } from "./transcript.js";
+import type { CallRecord } from "./types.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("transcript-grounded summary generation", () => {
+  it("does not send model-reported outcome metadata to the summary model", async () => {
+    let requestBody = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        requestBody = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: "The call ended mid-response." } }] }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+
+    const call = {
+      callId: "grounded-1",
+      provider: "mock",
+      direction: "outbound",
+      state: "hangup-bot",
+      from: "+15550000001",
+      to: "+15550000002",
+      startedAt: Date.now(),
+      transcript: [
+        {
+          timestamp: Date.now(),
+          speaker: "bot",
+          text: "Let me answer that, then I will ask a follow-up.",
+          isFinal: true,
+        },
+      ],
+      processedEventIds: [],
+      metadata: {
+        outcome: {
+          status: "success",
+          details: "I answered the question and asked the follow-up.",
+        },
+      },
+    } as CallRecord;
+
+    await expect(generateCallSummary({ call, apiKey: "test" })).resolves.toBe(
+      "The call ended mid-response.",
+    );
+    expect(requestBody).toContain("Let me answer that, then I will ask a follow-up.");
+    expect(requestBody).not.toContain("I answered the question and asked the follow-up.");
+    expect(requestBody).toContain("transcript is the sole source of truth");
+  });
+});
 
 const waitFor = async (predicate: () => boolean, timeoutMs = 3000): Promise<void> => {
   const start = Date.now();

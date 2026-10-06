@@ -35,7 +35,7 @@ describe("DTMF generation", () => {
 });
 
 describe("call outcome recording", () => {
-  it("stores outcome on the call and includes it in the transcript markdown", async () => {
+  it("stores model-reported outcome metadata but excludes it from transcript markdown", async () => {
     const { manager } = await createManagerHarness();
     const { callId } = await manager.initiateCall("+15550000009");
     markCallAnswered(manager, callId, "evt-outcome-1");
@@ -50,8 +50,8 @@ describe("call outcome recording", () => {
     expect((call.metadata?.outcome as { status: string }).status).toBe("success");
 
     const md = buildTranscriptMarkdown(call);
-    expect(md).toContain("## Reported Outcome");
-    expect(md).toContain("Confirmation #4821");
+    expect(md).not.toContain("## Reported Outcome");
+    expect(md).not.toContain("Confirmation #4821");
   });
 
   it("returns false for unknown calls", async () => {
@@ -70,10 +70,11 @@ describe("call outcome recording", () => {
     let transcript: Awaited<ReturnType<typeof manager.getTranscript>>;
     for (let i = 0; i < 50; i++) {
       transcript = await manager.getTranscript(callId);
-      if (transcript?.outcome) break;
+      if (transcript?.reportedOutcome) break;
       await new Promise((r) => setTimeout(r, 20));
     }
-    expect(transcript?.outcome?.details).toContain("9-5");
+    expect(transcript?.reportedOutcome?.details).toContain("9-5");
+    expect(transcript?.reportedOutcome?.unverified).toBe(true);
   });
 });
 

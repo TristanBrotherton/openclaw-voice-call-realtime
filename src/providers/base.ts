@@ -59,6 +59,13 @@ export interface VoiceCallProvider {
   playTts(input: PlayTtsInput): Promise<void>;
 
   /**
+   * Play TTS through a path that does not depend on the active realtime
+   * conversation session. Used as a last-resort closing-message fallback.
+   * Returns false when the provider cannot do that without disrupting the call.
+   */
+  playTtsFallback?(input: PlayTtsInput): Promise<boolean>;
+
+  /**
    * Start listening for user speech (activate STT).
    */
   startListening(input: StartListeningInput): Promise<void>;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WebhookContext } from "../types.js";
 import { TwilioProvider } from "./twilio.js";
 
@@ -22,6 +22,44 @@ function createContext(rawBody: string, query?: WebhookContext["query"]): Webhoo
 }
 
 describe("TwilioProvider", () => {
+  it("can bypass realtime and synthesize a closing line into the active stream", async () => {
+    const provider = createProvider();
+    const sendAudio = vi.fn();
+    const sendMark = vi.fn();
+    const queueTts = vi.fn(
+      async (_streamSid: string, playFn: (signal: AbortSignal) => Promise<void>) => {
+        await playFn(new AbortController().signal);
+      },
+    );
+    provider.setTTSProvider({
+      synthesizeForTelephony: async () => Buffer.alloc(160, 0xff),
+    });
+    provider.setMediaStreamHandler({ queueTts, sendAudio, sendMark } as never);
+    provider.registerCallStream("CA-close", "MS-close");
+
+    await expect(
+      provider.playTtsFallback({
+        callId: "call-close",
+        providerCallId: "CA-close",
+        text: "Thank you. Goodbye.",
+      }),
+    ).resolves.toBe(true);
+    expect(queueTts).toHaveBeenCalledWith("MS-close", expect.any(Function));
+    expect(sendAudio).toHaveBeenCalledWith("MS-close", Buffer.alloc(160, 0xff));
+    expect(sendMark).toHaveBeenCalledWith("MS-close", expect.stringMatching(/^tts-/));
+  });
+
+  it("reports no direct fallback when no telephony TTS stream is available", async () => {
+    const provider = createProvider();
+    await expect(
+      provider.playTtsFallback({
+        callId: "call-close",
+        providerCallId: "CA-close",
+        text: "Thank you. Goodbye.",
+      }),
+    ).resolves.toBe(false);
+  });
+
   it("returns streaming TwiML for outbound conversation calls before in-progress", () => {
     const provider = createProvider();
     const ctx = createContext("CallStatus=initiated&Direction=outbound-api&CallSid=CA123", {

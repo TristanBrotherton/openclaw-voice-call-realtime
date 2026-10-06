@@ -1,5 +1,10 @@
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+// NOTE: import from `agent-harness-runtime`, not `agent-harness`. The gateway
+// (2026.9.6) only exports callGatewayTool from the runtime subpath; the older
+// openclaw devDependency in this fork still exports it from both, which is why
+// `tsc` cannot catch the wrong subpath. Verified live on 2026-09-29.
+import { callGatewayTool } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
 import { registerVoiceCallCli } from "./src/cli.js";
 import {
@@ -190,6 +195,36 @@ const VoiceCallToolSchema = Type.Union([
   }),
 ]);
 
+/**
+ * Process-wide runtime slot, shared across plugin registrations.
+ *
+ * OpenClaw ≥ 2026.9 can call `register()` more than once in the same gateway
+ * process: the gateway registers the plugin at startup (and starts the
+ * service), and agent tool resolution may cold-load a separate "standalone"
+ * plugin registry — a fresh module instance with its own `register()` closure.
+ * If the runtime lived in the closure, that second closure would build a second
+ * VoiceCallRuntime and try to bind the webhook port again (EADDRINUSE on 3336).
+ * Keying the slot on `bind:port` and storing it on `globalThis` lets every
+ * registration in the process share the one live runtime.
+ */
+type SharedRuntimeSlot = {
+  runtime: VoiceCallRuntime | null;
+  runtimePromise: Promise<VoiceCallRuntime> | null;
+};
+
+const SHARED_RUNTIME_SLOTS = Symbol.for("openclaw.voice-call-tristan.runtime-slots");
+
+function resolveSharedRuntimeSlot(key: string): SharedRuntimeSlot {
+  const globalSlots = globalThis as unknown as Record<symbol, Map<string, SharedRuntimeSlot>>;
+  const slots = (globalSlots[SHARED_RUNTIME_SLOTS] ??= new Map<string, SharedRuntimeSlot>());
+  let slot = slots.get(key);
+  if (!slot) {
+    slot = { runtime: null, runtimePromise: null };
+    slots.set(key, slot);
+  }
+  return slot;
+}
+
 const voiceCallPlugin = {
   id: "voice-call-tristan",
   name: "Voice Call",
@@ -210,8 +245,8 @@ const voiceCallPlugin = {
       }
     }
 
-    let runtimePromise: Promise<VoiceCallRuntime> | null = null;
-    let runtime: VoiceCallRuntime | null = null;
+    // Shared across every registration in this process (see resolveSharedRuntimeSlot).
+    const slot = resolveSharedRuntimeSlot(`${config.serve.bind}:${config.serve.port}`);
 
     const ensureRuntime = async () => {
       if (!config.enabled) {
@@ -220,10 +255,10 @@ const voiceCallPlugin = {
       if (!validation.valid) {
         throw new Error(validation.errors.join("; "));
       }
-      if (runtime) {
-        return runtime;
+      if (slot.runtime) {
+        return slot.runtime;
       }
-      if (!runtimePromise) {
+      if (!slot.runtimePromise) {
         const subagent = (api.runtime as { subagent?: import("./src/assistant-bridge.js").SubagentRuntime })
           .subagent;
         const assistantBridge =
@@ -260,7 +295,7 @@ const voiceCallPlugin = {
             "[voice-call] postCallReport enabled but this OpenClaw build does not expose runtime.subagent; reports disabled",
           );
         }
-        runtimePromise = createVoiceCallRuntime({
+        slot.runtimePromise = createVoiceCallRuntime({
           config,
           coreConfig: api.config as CoreConfig,
           ttsRuntime: api.runtime.tts,
@@ -270,16 +305,20 @@ const voiceCallPlugin = {
           ownerMessenger,
         });
       }
+      const pending = slot.runtimePromise;
       try {
-        runtime = await runtimePromise;
+        const rt = await pending;
+        slot.runtime = rt;
+        return rt;
       } catch (err) {
         // Reset so the next call can retry instead of caching the
         // rejected promise forever (which also leaves the port orphaned
         // if the server started before the failure).  See: #32387
-        runtimePromise = null;
+        if (slot.runtimePromise === pending) {
+          slot.runtimePromise = null;
+        }
         throw err;
       }
-      return runtime;
     };
 
     const sendError = (respond: (ok: boolean, payload?: unknown) => void, err: unknown) => {
@@ -428,12 +467,13 @@ const voiceCallPlugin = {
             return;
           }
           const rt = await ensureRuntime();
-          const call = rt.manager.getCall(raw) || rt.manager.getCallByProviderCallId(raw);
+          const call = await rt.manager.findCall(raw);
           if (!call) {
             respond(true, { found: false });
             return;
           }
-          respond(true, { found: true, call });
+          const pendingQuestion = rt.webhookServer.getPendingOwnerQuestion(call.callId);
+          respond(true, { found: true, call, ...(pendingQuestion ? { pendingQuestion } : {}) });
         } catch (err) {
           sendError(respond, err);
         }
@@ -487,16 +527,46 @@ const voiceCallPlugin = {
     );
 
     api.registerGatewayMethod(
+      "voicecall-tristan.answer-question",
+      async ({ params, respond }: GatewayRequestHandlerOptions) => {
+        try {
+          const callId = typeof params?.callId === "string" ? params.callId.trim() : "";
+          const answer = typeof params?.answer === "string" ? params.answer.trim() : "";
+          if (!callId || !answer) {
+            respond(false, { error: "callId and answer required" });
+            return;
+          }
+          const rt = await ensureRuntime();
+          const delivered = rt.webhookServer.answerOwnerQuestion(callId, answer);
+          respond(
+            true,
+            delivered
+              ? { delivered: true }
+              : {
+                  delivered: false,
+                  note: "No pending question for that call — it may have timed out or the call ended. The voice AI was told to proceed conservatively.",
+                },
+          );
+        } catch (err) {
+          sendError(respond, err);
+        }
+      },
+    );
+
+    api.registerGatewayMethod(
       "voicecall-tristan.start",
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
-          const to = typeof params?.to === "string" ? params.to.trim() : "";
           const message = typeof params?.message === "string" ? params.message.trim() : "";
+          const rt = await ensureRuntime();
+          // Legacy tool path (no `action`) never required `to`; keep the config default so
+          // routing through this method does not change behaviour.
+          const to =
+            typeof params?.to === "string" && params.to.trim() ? params.to.trim() : rt.config.toNumber;
           if (!to) {
             respond(false, { error: "to required" });
             return;
           }
-          const rt = await ensureRuntime();
           const result = await rt.manager.initiateCall(to, undefined, {
             message: message || undefined,
           });
@@ -535,7 +605,8 @@ const voiceCallPlugin = {
         });
 
         try {
-          const rt = await ensureRuntime();
+          const dispatch = (method: string, payload: Record<string, unknown>) =>
+            callGatewayTool(method, {}, payload, { scopes: ["operator.admin"] });
 
           if (typeof params?.action === "string") {
             switch (params.action) {
@@ -544,40 +615,7 @@ const voiceCallPlugin = {
                 if (!message) {
                   throw new Error("message required");
                 }
-                const to =
-                  typeof params.to === "string" && params.to.trim()
-                    ? params.to.trim()
-                    : rt.config.toNumber;
-                if (!to) {
-                  throw new Error("to required");
-                }
-                const talkingPoints = Array.isArray(params.talking_points)
-                  ? (params.talking_points as string[]).filter(
-                      (p) => typeof p === "string" && p.trim(),
-                    )
-                  : undefined;
-                const callParty =
-                  params.call_party === "first-party" || params.call_party === "third-party"
-                    ? params.call_party
-                    : undefined;
-                const callerIdentity =
-                  typeof params.caller_identity === "string" && params.caller_identity.trim()
-                    ? params.caller_identity.trim()
-                    : undefined;
-                const result = await rt.manager.initiateCall(to, undefined, {
-                  message,
-                  mode:
-                    params.mode === "notify" || params.mode === "conversation"
-                      ? params.mode
-                      : undefined,
-                  talkingPoints,
-                  callParty,
-                  callerIdentity,
-                });
-                if (!result.success) {
-                  throw new Error(result.error || "initiate failed");
-                }
-                return json({ callId: result.callId, initiated: true });
+                return json(await dispatch("voicecall-tristan.initiate", params));
               }
               case "continue_call": {
                 const callId = String(params.callId || "").trim();
@@ -585,11 +623,7 @@ const voiceCallPlugin = {
                 if (!callId || !message) {
                   throw new Error("callId and message required");
                 }
-                const result = await rt.manager.continueCall(callId, message);
-                if (!result.success) {
-                  throw new Error(result.error || "continue failed");
-                }
-                return json({ success: true, transcript: result.transcript });
+                return json(await dispatch("voicecall-tristan.continue", { callId, message }));
               }
               case "speak_to_user": {
                 const callId = String(params.callId || "").trim();
@@ -597,34 +631,21 @@ const voiceCallPlugin = {
                 if (!callId || !message) {
                   throw new Error("callId and message required");
                 }
-                const result = await rt.manager.speak(callId, message);
-                if (!result.success) {
-                  throw new Error(result.error || "speak failed");
-                }
-                return json({ success: true });
+                return json(await dispatch("voicecall-tristan.speak", { callId, message }));
               }
               case "end_call": {
                 const callId = String(params.callId || "").trim();
                 if (!callId) {
                   throw new Error("callId required");
                 }
-                const result = await rt.manager.endCall(callId);
-                if (!result.success) {
-                  throw new Error(result.error || "end failed");
-                }
-                return json({ success: true });
+                return json(await dispatch("voicecall-tristan.end", { callId }));
               }
               case "get_status": {
                 const callId = String(params.callId || "").trim();
                 if (!callId) {
                   throw new Error("callId required");
                 }
-                const call = await rt.manager.findCall(callId);
-                if (!call) {
-                  return json({ found: false });
-                }
-                const pendingQuestion = rt.webhookServer.getPendingOwnerQuestion(call.callId);
-                return json({ found: true, call, ...(pendingQuestion ? { pendingQuestion } : {}) });
+                return json(await dispatch("voicecall-tristan.status", { callId }));
               }
               case "answer_call_question": {
                 const callId = String(params.callId || "").trim();
@@ -632,14 +653,8 @@ const voiceCallPlugin = {
                 if (!callId || !answer) {
                   throw new Error("callId and answer required");
                 }
-                const resolved = rt.webhookServer.answerOwnerQuestion(callId, answer);
                 return json(
-                  resolved
-                    ? { delivered: true }
-                    : {
-                        delivered: false,
-                        note: "No pending question for that call — it may have timed out or the call ended. The voice AI was told to proceed conservatively.",
-                      },
+                  await dispatch("voicecall-tristan.answer-question", { callId, answer }),
                 );
               }
               case "get_transcript": {
@@ -647,11 +662,7 @@ const voiceCallPlugin = {
                 if (!callId) {
                   throw new Error("callId required");
                 }
-                const result = await rt.manager.getTranscript(callId);
-                if (!result) {
-                  return json({ found: false });
-                }
-                return json({ found: true, ...result });
+                return json(await dispatch("voicecall-tristan.transcript", { callId }));
               }
             }
           }
@@ -662,27 +673,10 @@ const voiceCallPlugin = {
             if (!sid) {
               throw new Error("sid required for status");
             }
-            const call = rt.manager.getCall(sid) || rt.manager.getCallByProviderCallId(sid);
-            return json(call ? { found: true, call } : { found: false });
+            return json(await dispatch("voicecall-tristan.status", { sid }));
           }
 
-          const to =
-            typeof params.to === "string" && params.to.trim()
-              ? params.to.trim()
-              : rt.config.toNumber;
-          if (!to) {
-            throw new Error("to required for call");
-          }
-          const result = await rt.manager.initiateCall(to, undefined, {
-            message:
-              typeof params.message === "string" && params.message.trim()
-                ? params.message.trim()
-                : undefined,
-          });
-          if (!result.success) {
-            throw new Error(result.error || "initiate failed");
-          }
-          return json({ callId: result.callId, initiated: true });
+          return json(await dispatch("voicecall-tristan.start", params));
         } catch (err) {
           return json({
             error: err instanceof Error ? err.message : String(err),
@@ -719,15 +713,18 @@ const voiceCallPlugin = {
         }
       },
       stop: async () => {
-        if (!runtimePromise) {
+        const pending = slot.runtimePromise;
+        if (!pending) {
           return;
         }
         try {
-          const rt = await runtimePromise;
+          const rt = await pending;
           await rt.stop();
         } finally {
-          runtimePromise = null;
-          runtime = null;
+          if (slot.runtimePromise === pending) {
+            slot.runtimePromise = null;
+            slot.runtime = null;
+          }
         }
       },
     });
