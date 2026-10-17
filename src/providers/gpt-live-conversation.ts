@@ -627,9 +627,9 @@ export const LIVE_VOICE_DELEGATION =
   "HOW ACTIONS WORK ON THIS CALL: you do the talking; a backend assistant does every action. " +
   "Whenever the instructions above say to use a tool, delegate that task to the backend instead " +
   "(describe what is needed in plain words). Always delegate: pressing phone keys for a menu; " +
-  "recording the outcome of the call; ending the call; lookups and questions for the person you " +
+  "saving the outcome of the call; ending the call; lookups and questions for the person you " +
   "work for; transfers; home and calendar checks. Ending the call: say your goodbye yourself, " +
-  "then immediately delegate 'record the outcome and end the call' — never leave the line open " +
+  "then immediately delegate 'save the outcome and end the call' — never leave the line open " +
   "after a goodbye. While delegated work runs, keep the conversation natural and short; never " +
   "say an action is done or state a result before the backend's result arrives.";
 
@@ -642,7 +642,7 @@ export function buildBackendInstructions(callPrompt: string): string {
   return (
     "You are the task backend for a live phone call. A voice model is talking to the " +
     "other party and delegates to you whenever a tool is needed (ending the call, " +
-    "recording the outcome, pressing keypad keys, lookups, owner questions, transfers, " +
+    "saving the outcome, pressing keypad keys, lookups, owner questions, transfers, " +
     "home and calendar). Use the tools as the call instructions below describe. Your " +
     "final text is spoken to the other party by the voice model: keep it to one or two " +
     "short spoken sentences of verified facts, no lists, no markdown, nothing internal. " +

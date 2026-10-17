@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026.10.17
+
+### Changes
+
+- Call recordings are debugging-only: prompts, tool descriptions and results,
+  post-call reports and transcript files no longer mention them (a test keeps
+  it that way). The voice model and the OpenClaw agent never see the word.
+- Dev dependencies: vitest 4.1.12, yaml 2.9.1 and overrides for vulnerable
+  transitive packages; runtime dependencies have no known vulnerabilities.
+
 ## 2026.10.16
 
 ### New

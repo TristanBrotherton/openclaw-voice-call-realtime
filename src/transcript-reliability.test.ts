@@ -407,12 +407,12 @@ describe("post-call report contents", () => {
     expect(r.transcriptTruncated).toBe(true);
     expect(r.transcriptText).toContain("Caller: Hello");
 
-    const msg = buildCallReportMessage({ ...r, recordingPath: "/store/recordings/c.wav" });
+    const msg = buildCallReportMessage(r);
     expect(msg).toContain("--- TRANSCRIPT START ---");
     expect(msg).toContain("Caller: Hello");
     expect(msg).toContain("the rest is in");
-    expect(msg).toContain("Call recording (WAV audio file): /store/recordings/c.wav");
-    expect(msg).toContain("send this recording file to the owner");
+    // Recordings are for debugging only: the report never mentions them.
+    expect(msg).not.toMatch(/recording|\.wav/i);
   });
 
   it("reports unanswered outbound calls with the outcome", async () => {
@@ -567,8 +567,8 @@ describe("recording transcript", () => {
     release();
     await waitFor(() => fs.existsSync(md));
     const content = fs.readFileSync(md, "utf-8");
-    expect(content).toContain(`- Recording: ${wavPath}`);
-    expect(content).toContain("## Transcript (from the recording — what was actually heard)");
+    expect(content).not.toMatch(/recording|\.wav/i);
+    expect(content).toContain("## Transcript (what was actually heard)");
     expect(content).toContain("Caller: Heard words");
     expect(content).toContain("## Transcript (live captions)");
     expect(content).toContain("Live caption line");
@@ -588,7 +588,9 @@ describe("recording transcript", () => {
     await manager.endCall(callId);
     const md = transcriptFilePath(manager.getStorePath(), callId);
     await waitFor(() => fs.existsSync(md));
-    expect(fs.readFileSync(md, "utf-8")).toMatch(/\(not available: transcription failed: .*500/);
+    const failed = fs.readFileSync(md, "utf-8");
+    expect(failed).toContain("## Transcript (what was actually heard)\n\n(not available)");
+    expect(failed).toContain("## Transcript (live captions)");
   });
 
   it("finalize gives up on a barrier after the timeout", async () => {

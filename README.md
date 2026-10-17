@@ -390,7 +390,7 @@ If you run the Voice PE add-on's OpenClaw bridge, calls with the verified owner 
 "recording": { "enabled": true }
 ```
 
-Saves one stereo WAV per call to `<store>/recordings/<callId>.wav`: the left channel is the other party as Twilio delivered it, the right channel is the assistant as the other party actually heard it (audio cut off by an interruption or the hangup is not in the file). The path is added to the call record, the transcript file and the post-call report, so your agent can send you the file.
+Saves one stereo WAV per call to `<store>/recordings/<callId>.wav`: the left channel is the other party as Twilio delivered it, the right channel is the assistant as the other party actually heard it (audio cut off by an interruption or the hangup is not in the file). Recordings are for the operator's own debugging: nothing the voice model or your OpenClaw agent reads mentions them (prompts, tool results, post-call reports and transcript files leave them out), so a call never brings them up. When a recording exists, the transcript file also gets a version transcribed from it — what was actually heard — alongside the live captions.
 
 **Recording is off unless you turn it on.** Laws on recording phone calls differ by country and state, and some (for example California) require the consent of everyone on the call. Check what applies to you before enabling it, and tell the other party where required — the plugin does not announce the recording.
 
@@ -402,7 +402,7 @@ Saves one stereo WAV per call to `<store>/recordings/<callId>.wav`: the left cha
 
 Uses Twilio's async AMD with `DetectMessageEnd`: the call connects immediately (no answer delay for humans), and when Twilio determines a machine answered — timed to the end of the greeting, i.e. the beep — the policy applies:
 
-- `leave-message` (default): the voice AI is told it's recording a voicemail and leaves one concise message, then hangs up.
+- `leave-message` (default): the voice AI is told it reached voicemail and leaves one concise message, then hangs up.
 - `hangup`: end the call silently (pairs well with post-call reports → your agent can schedule a retry).
 - `continue`: behave as if a human answered.
 

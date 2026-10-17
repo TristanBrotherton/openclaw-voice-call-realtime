@@ -273,10 +273,9 @@ export type CallReport = {
   /** The transcript itself (bounded; the file at transcriptPath has all of it). */
   transcriptText?: string;
   /** Where transcriptText came from: the call recording or the live captions. */
-  transcriptSource?: "recording" | "live-captions";
+  transcriptSource?: "heard" | "live-captions";
   transcriptTruncated?: boolean;
   /** Local WAV recording of the call (stereo: other party left, assistant right). */
-  recordingPath?: string;
 };
 
 export type PostCallReporter = (report: CallReport) => Promise<void>;
@@ -336,20 +335,13 @@ export function buildCallReportMessage(report: CallReport, ownerTarget?: string)
         ]
       : []),
     ...(report.transcriptPath ? [`Full transcript file: ${report.transcriptPath}`] : []),
-    ...(report.recordingPath
-      ? [
-          `Call recording (WAV audio file): ${report.recordingPath}`,
-          "You can send this recording file to the owner as an attachment (e.g. if the call",
-          "was important or they ask for it).",
-        ]
-      : []),
     `Call ID: ${report.callId}`,
   ];
   if (report.transcriptText?.trim()) {
     lines.push(
       "",
-      report.transcriptSource === "recording"
-        ? "Transcript (transcribed from the call recording — what was actually heard; for your reference, do not paste it all to the owner):"
+      report.transcriptSource === "heard"
+        ? "Transcript (what was actually heard; for your reference, do not paste it all to the owner):"
         : "Transcript (live captions; for your reference, do not paste it all to the owner):",
       "--- TRANSCRIPT START ---",
       report.transcriptText,

@@ -1,6 +1,6 @@
 {
   "name": "voice-call-tristan",
-  "version": "2026.10.16",
+  "version": "2026.10.17",
   "description": "Real phone calls for your OpenClaw assistant — Twilio + OpenAI Realtime conversation mode with in-call tools, transcripts, and call screening",
   "type": "module",
   "dependencies": {

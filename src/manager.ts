@@ -717,10 +717,6 @@ export class CallManager {
       fullText.length > REPORT_TRANSCRIPT_MAX_CHARS
         ? fullText.slice(0, REPORT_TRANSCRIPT_MAX_CHARS)
         : fullText;
-    const recordingPath =
-      typeof metadata.recordingPath === "string" && fs.existsSync(metadata.recordingPath)
-        ? metadata.recordingPath
-        : undefined;
     const report: import("./assistant-bridge.js").CallReport = {
       callId: call.callId,
       direction: call.direction,
@@ -746,12 +742,12 @@ export class CallManager {
       ...(transcriptText.trim()
         ? {
             transcriptText,
-            transcriptSource: recordingTranscript?.trim() ? "recording" : "live-captions",
+            transcriptSource: recordingTranscript?.trim() ? "heard" : "live-captions",
             transcriptTruncated: fullText.length > transcriptText.length,
           }
         : {}),
       transcriptPath: filePath,
-      ...(recordingPath ? { recordingPath } : {}),
+
     };
     console.log(`[voice-call] Dispatching post-call report for ${call.callId}`);
     this.postCallReporter(report).catch((err) => {
@@ -847,8 +843,8 @@ export class CallManager {
         };
         transcript: CallRecord["transcript"];
         transcriptPath?: string;
-        recordingPath?: string;
-        recordingTranscript?: string;
+        /** What was actually heard (from the call audio), when available. */
+        heardTranscript?: string;
       }
     | undefined
   > {
@@ -863,10 +859,6 @@ export class CallManager {
         : transcriptFilePath(this.storePath, call.callId);
     // Only point at files that exist (finalize may not have written it yet).
     const transcriptPath = fs.existsSync(candidatePath) ? candidatePath : undefined;
-    const recordingPath =
-      typeof metadata.recordingPath === "string" && fs.existsSync(metadata.recordingPath)
-        ? metadata.recordingPath
-        : undefined;
     return {
       callId: call.callId,
       state: call.state,
@@ -885,9 +877,8 @@ export class CallManager {
         : undefined,
       transcript: call.transcript,
       ...(transcriptPath ? { transcriptPath } : {}),
-      ...(recordingPath ? { recordingPath } : {}),
       ...(typeof metadata.recordingTranscript === "string"
-        ? { recordingTranscript: metadata.recordingTranscript }
+        ? { heardTranscript: metadata.recordingTranscript }
         : {}),
     };
   }

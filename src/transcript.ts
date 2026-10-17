@@ -65,7 +65,6 @@ export function buildTranscriptMarkdown(
     `- Ended: ${endedAt}`,
     ...(durationSec !== undefined ? [`- Talk time: ${durationSec}s`] : []),
     `- End reason: ${call.endReason ?? call.state}`,
-    ...(recordingPath ? [`- Recording: ${recordingPath}`] : []),
     "",
   ];
   // Deliberately do not render metadata.outcome here. That field is a model
@@ -78,11 +77,11 @@ export function buildTranscriptMarkdown(
   const live = buildTranscriptText(call) || "(no speech captured)";
   if (recordingPath || recording) {
     parts.push(
-      "## Transcript (from the recording — what was actually heard)",
+      "## Transcript (what was actually heard)",
       "",
       recording?.text?.trim()
         ? recording.text
-        : `(not available: ${recording?.error ?? "the recording was not transcribed"})`,
+        : "(not available)",
       "",
       "## Transcript (live captions)",
       "",

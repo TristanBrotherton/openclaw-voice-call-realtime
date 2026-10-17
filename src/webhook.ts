@@ -305,8 +305,8 @@ export class VoiceCallWebhookServer {
         const details = typeof args.details === "string" ? args.details : "";
         const recorded = this.manager.recordCallOutcome(providerCallId, { status, details });
         return recorded
-          ? "Outcome recorded for the owner."
-          : "Could not find the active call to record against.";
+          ? "Outcome saved for the owner."
+          : "Could not find the active call to save it against.";
       }
 
       case "verify_passphrase": {
@@ -424,7 +424,7 @@ export class VoiceCallWebhookServer {
           return (
             "The owner has not replied yet. Proceed conservatively: accept a reasonable " +
             "option tentatively and say the owner will confirm, or offer to call back. " +
-            "Record what happened via report_call_outcome."
+            "Save what happened via report_call_outcome."
           );
         }
         console.log(`[voice-call] ask_owner answered on ${key} (${answer.length} chars)`);
@@ -529,7 +529,7 @@ export class VoiceCallWebhookServer {
                 "you'll text them the answer shortly. "
               : "Tell them naturally, ONCE, that you can't get to it this moment and " +
                 "someone will follow up. ") +
-            "Do not repeat this. Record the open item with report_call_outcome so it is " +
+            "Do not repeat this. Save the open item with report_call_outcome so it is " +
             "followed up after the call."
           );
         }
@@ -937,7 +937,7 @@ export class VoiceCallWebhookServer {
             "Tell them now, briefly and in your own words, then continue the conversation."
         : `The earlier question ("${question}") could not be answered right now (internal). ` +
             "Tell them naturally, once, that you couldn't get it just now and it will be followed up, " +
-            "and record the open item with report_call_outcome.",
+            "and save the open item with report_call_outcome.",
     );
   }
 
@@ -1330,7 +1330,7 @@ export class VoiceCallWebhookServer {
         {
           name: "report_call_outcome",
           description:
-            "Record the outcome of this call for the owner. Call this once, before " +
+            "Save the outcome of this call for the owner. Call this once, before " +
             "ending the call, with everything the owner needs to know: whether the " +
             "goal was accomplished and all key facts collected (times, prices, " +
             "hours, confirmation numbers, names).",
@@ -1609,9 +1609,9 @@ export class VoiceCallWebhookServer {
                     {
                       name: "propose_decision",
                       description:
-                        "OWNER CALLS ONLY. Record the owner's decision on an open item, as a PROPOSAL " +
+                        "OWNER CALLS ONLY. Save the owner's decision on an open item, as a PROPOSAL " +
                         "only. Call it ONLY after you have read the decision back in one sentence " +
-                        "('So the decision is …; shall I record that?') and the owner clearly said yes. " +
+                        "('So the decision is …; shall I note that down?') and the owner clearly said yes. " +
                         "Never call it for anyone else's words or on a guess. It is not final: tell the " +
                         "owner a text is coming and the decision counts once they confirm it there.",
                       parameters: {
@@ -1631,7 +1631,7 @@ export class VoiceCallWebhookServer {
           name: "set_on_hold",
           description:
             "Tell the system you have been put on hold (hold music or a 'please hold' " +
-            "recording) or that a live person is back. While on hold, stay silent and wait; " +
+            "message) or that a live person is back. While on hold, stay silent and wait; " +
             "call this with on_hold=false as soon as a person speaks to you again.",
           parameters: {
             type: "object",
@@ -1840,7 +1840,7 @@ export class VoiceCallWebhookServer {
             "(3) immediately use end_call with final_message as your one and only goodbye — no spoken wrap-up before it.\n" +
             "- Never announce that you are about to confirm something and then hang up — say the details first, then end. " +
             "Anything you have not spoken aloud (or put in final_message) will never be heard. Never leave the line open after the conversation is over.\n" +
-            "- Tool results, timeouts, and error messages are INTERNAL. Never read them aloud, and never say words like 'system', 'tool', 'lookup', 'timed out', or 'error' to the other party. If something fails, speak like a human colleague: \"I can't get to that right now — I'll text you the answer in a few minutes\" — and record it via report_call_outcome so it is followed up.\n" +
+            "- Tool results, timeouts, and error messages are INTERNAL. Never read them aloud, and never say words like 'system', 'tool', 'lookup', 'timed out', or 'error' to the other party. If something fails, speak like a human colleague: \"I can't get to that right now — I'll text you the answer in a few minutes\" — and save it via report_call_outcome so it is followed up.\n" +
             "- Never say 'the owner' out loud — refer to the person you assist by name. Never repeat a status you already told them (say a follow-up is coming AT MOST once per call).\n" +
             "- Never narrate your own thinking or announce what you are about to say. No meta-preambles like 'Let me think of a suggestion', 'Let me confirm what we've got', or 'Let me see' followed by the actual reply — just say the reply itself. Announcing a short wait is ONLY for the slow tools that explicitly call for it (ask_assistant, ask_owner); an ordinary answer needs no warm-up sentence.\n" +
             "- Speak ONE conversational turn at a time and keep it short. Do not stack a greeting plus a long pitch in one breath — greet, pause for a response, then continue.\n" +
@@ -1861,7 +1861,7 @@ export class VoiceCallWebhookServer {
               : undefined;
           const situationsPrompt =
             "HANDLING THE UNEXPECTED:\n" +
-            "- Hold music or a recorded 'please hold' message: use set_on_hold (on_hold=true) and stay silent; when a live person speaks again, use set_on_hold (on_hold=false) and continue.\n" +
+            "- Hold music or an automated 'please hold' message: use set_on_hold (on_hold=true) and stay silent; when a live person speaks again, use set_on_hold (on_hold=false) and continue.\n" +
             "- An automated menu: let the prompt finish, then press the right keys with press_phone_keys; do not talk to the menu.\n" +
             "- A call-screening assistant asks who is calling: say your name, who you are calling for and why, in one sentence, then wait.\n" +
             "- The wrong person answers: say who you were trying to reach, ask politely whether they can help or pass a message, and never share private details with them.\n" +
@@ -2406,7 +2406,7 @@ export class VoiceCallWebhookServer {
       console.log(`[voice-call] One minute left on ${flow.providerCallId}`);
       session.instruct(
         "The call must end in about one minute. At the next natural pause, wrap up: confirm " +
-          "anything agreed, record the outcome, and end the call politely.",
+          "anything agreed, save the outcome, and end the call politely.",
       );
     }
     // Voicemail: the message has been left (a bot line finished after the
@@ -2695,7 +2695,7 @@ export function toolsForParty(tools: RealtimeToolDefinition[], party: string): R
 const ASK_ASSISTANT_FOREGROUND_MS = 8_000;
 
 const VOICEMAIL_INSTRUCTION =
-  "You have reached voicemail and the recording has started (the beep has sounded). Leave ONE " +
+  "You have reached voicemail and the beep has sounded. Leave ONE " +
   "concise message now: who you are, who you are calling for, why you called, and how to get " +
   "back to you if appropriate. Do not ask questions or wait for replies. When the message is " +
   "complete, use end_call with a brief final_message sign-off.";
