@@ -291,8 +291,29 @@ export const VoiceCallStreamingConfigSchema = z
     realtimeModel: z.string().min(1).default("gpt-4o-realtime-preview"),
     /** Voice used in conversation mode */
     realtimeVoice: z
-      .enum(["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"])
+      .enum(["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"])
       .default("alloy"),
+    /**
+     * Voice runtime for conversation mode. "realtime" = OpenAI Realtime
+     * (realtimeModel, tools called by the voice model). "live" = GPT-Live
+     * (the voice model talks, a delegated backend model calls the tools).
+     */
+    runtime: z.enum(["realtime", "live"]).default("realtime"),
+    /** GPT-Live settings (runtime "live") */
+    live: z
+      .object({
+        model: z.string().min(1).default("gpt-live-1"),
+        /** Live voice (e.g. cedar, marin, vesper, meridian); omitted = server default */
+        voice: z.string().min(1).optional(),
+        /** Backend model that runs the call tools */
+        backendModel: z.string().min(1).default("gpt-6-luna"),
+        reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high"]).default("low"),
+        serviceTier: z.enum(["auto", "default", "flex", "priority"]).default("priority"),
+        /** Use the Realtime runtime for the call when Live cannot connect */
+        fallbackToRealtime: z.boolean().default(true),
+      })
+      .strict()
+      .prefault({}),
     /** Optional system prompt for conversation mode */
     realtimeSystemPrompt: z.string().optional(),
     /** VAD silence duration in ms before considering speech ended */
@@ -339,6 +360,8 @@ export const VoiceCallStreamingConfigSchema = z
     sttModel: "gpt-4o-transcribe",
     realtimeModel: "gpt-4o-realtime-preview",
     realtimeVoice: "alloy",
+    runtime: "realtime",
+    live: {},
     silenceDurationMs: 800,
     vadThreshold: 0.5,
     streamPath: "/voice/stream",
@@ -550,6 +573,19 @@ export const VoiceCallConfigSchema = z
       .default({ enabled: false, onMachine: "leave-message" }),
 
     /**
+     * Call recording: one stereo WAV per call under <store>/recordings/
+     * (left = other party, right = the bot as heard). Off by default:
+     * recording laws differ by place (some require every party's consent),
+     * so turning it on is the operator's decision.
+     */
+    recording: z
+      .object({
+        enabled: z.boolean().default(false),
+      })
+      .strict()
+      .default({ enabled: false }),
+
+    /**
      * Post-call report: when a call finalizes, run an agent turn that informs
      * the owner via their usual channel and performs obvious follow-ups
      * (e.g. add a confirmed booking to the calendar). Requires the OpenClaw
@@ -630,6 +666,24 @@ export const VoiceCallConfigSchema = z
      * that relays questions to the owner's OpenClaw agent (full toolset —
      * calendar, search, smart home, ...) and speaks the answer.
      */
+    /**
+     * Voice Bridge (the Voice PE add-on's OpenClaw bridge). When enabled, calls
+     * with the verified owner get the same tools as the Voice PE: explain mode
+     * (research into the owner's own projects, answered later by voice or
+     * text), discussions (open project items) and text delivery. Owner-only.
+     */
+    voiceBridge: z
+      .object({
+        enabled: z.boolean().default(false),
+        url: z.string().min(1).default("http://127.0.0.1:3338"),
+        /** Secret ask path, or a file holding it (e.g. the bridge's .ask-path). */
+        askPath: z.string().optional(),
+        askPathFile: z.string().optional(),
+        discussions: z.boolean().default(true),
+      })
+      .strict()
+      .default({ enabled: false, url: "http://127.0.0.1:3338", discussions: true }),
+
     assistantBridge: z
       .object({
         /** Enable the ask_assistant in-call tool */

@@ -88,7 +88,11 @@ export async function findCallInStore(
         call.callId === callIdOrProviderCallId ||
         call.providerCallId === callIdOrProviderCallId
       ) {
-        found = call; // last record wins
+        // Snapshots are appended fire-and-forget and can land out of order:
+        // keep the most complete one (longest transcript; later on ties).
+        if (!found || call.transcript.length >= found.transcript.length) {
+          found = call;
+        }
       }
     } catch {
       // Skip invalid lines.
@@ -123,4 +127,28 @@ export async function getCallHistoryFromStore(
   }
 
   return calls;
+}
+
+/**
+ * The latest snapshot of every call in the store (last line per callId wins),
+ * in first-seen order.
+ */
+export function loadLatestCallRecords(storePath: string): CallRecord[] {
+  const logPath = path.join(storePath, "calls.jsonl");
+  if (!fs.existsSync(logPath)) {
+    return [];
+  }
+  const callMap = new Map<CallId, CallRecord>();
+  for (const line of fs.readFileSync(logPath, "utf-8").split("\n")) {
+    if (!line.trim()) {
+      continue;
+    }
+    try {
+      const call = CallRecordSchema.parse(JSON.parse(line));
+      callMap.set(call.callId, call);
+    } catch {
+      // Skip invalid lines.
+    }
+  }
+  return Array.from(callMap.values());
 }

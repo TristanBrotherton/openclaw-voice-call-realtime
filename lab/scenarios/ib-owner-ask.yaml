@@ -1,0 +1,22 @@
+id: ib-owner-ask
+class: owner
+description: The owner asks an ordinary question; it goes to the real OpenClaw assistant through the Voice PE bridge (not a stand-in) and the answer is spoken.
+direction: inbound
+bridge: real
+call:
+  caller: owner
+steps:
+  - id: ask
+    say: "Hey, it's me. What's on my calendar tomorrow?"
+    gate: { after_bot_done: { quiet_ms: 1200 } }
+    gate_timeout_ms: 8000
+    voice: echo
+  - id: thanks
+    say: "Okay, thanks. Bye."
+    gate: { after_bot_done: { quiet_ms: 3000 } }
+    gate_timeout_ms: 120000
+    voice: echo
+expect:
+  ended_by: any
+  no_plugin_errors: true
+limits: { max_duration_ms: 180000, idle_end_ms: 8000 }

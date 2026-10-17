@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import http from "node:http";
 import { URL } from "node:url";
 import {
@@ -32,11 +33,81 @@ import {
 } from "./home-assistant.js";
 import { resolveCallParty } from "./assistant-bridge.js";
 import { buildFastRecallReply, searchLocalMemory } from "./fast-recall.js";
-import { createManagedRealtimeConversationSession } from "./providers/managed-realtime-conversation.js";
+import {
+  createManagedRealtimeConversationSession,
+  type ConversationSessionFactory,
+} from "./providers/managed-realtime-conversation.js";
+import { GptLiveConversationSession } from "./providers/gpt-live-conversation.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
 import type { TwilioProvider } from "./providers/twilio.js";
 import type { NormalizedEvent, WebhookContext } from "./types.js";
 import { startStaleCallReaper } from "./webhook/stale-call-reaper.js";
+import { CallRecorder, recordingFilePath } from "./call-recorder.js";
+import { PickupGate, SilenceWatch, type PickupRelease } from "./call-flow.js";
+import { SpeechDetector } from "./audio-pacing.js";
+import { mulawToPcm } from "./telephony-audio.js";
+import { chooseMenuKeys, looksLikeMenu } from "./menu-router.js";
+import { VoiceBridgeClient, parseTaskResult, phoneSessionKey, type TaskResult } from "./voice-bridge-client.js";
+
+/** 20 ms of mu-law silence: what the model hears while the pickup gate holds. */
+const MULAW_SILENCE_FRAME = Buffer.alloc(160, 0xff);
+/** Caller audio kept for replay while the pickup gate holds (5 s of 20 ms frames). */
+const MAX_HELD_FRAMES = 250;
+/** Longest voicemail message before the call is ended for it. */
+const VOICEMAIL_MAX_MS = 60_000;
+
+type CallFlowState = {
+  providerCallId: string;
+  direction: "inbound" | "outbound";
+  detector: SpeechDetector;
+  gate: PickupGate | null;
+  held: Buffer[];
+  silence: SilenceWatch;
+  session: import("./providers/managed-realtime-conversation.js").ManagedRealtimeConversationSession | null;
+  pendingRelease: PickupRelease | null;
+  ticker: NodeJS.Timeout | null;
+  ending: boolean;
+  openingMessage?: string;
+  voicemailTimer: NodeJS.Timeout | null;
+  failed: boolean;
+  wrapUpWarned?: boolean;
+  onHoldSince?: number;
+  /** When the other party said goodbye (cleared by anything else they say). */
+  userGoodbyeAt?: number;
+  /** Voicemail: when the message was requested, and when the bot last finished a line. */
+  voicemailSince?: number;
+  lastBotLineAt?: number;
+  /** Last time the menu router pressed keys. */
+  menuPressedAt?: number;
+  /** A Live interruption was already sent for the current caller speech segment. */
+  interruptSent?: boolean;
+  /** When the bot last said goodbye (and nobody has spoken since). */
+  goodbyeAt?: number;
+};
+
+/** "What's the latest on the dev system project", "how does our voice bridge work". */
+export function looksLikeProjectQuestion(text: string): boolean {
+  return (
+    /\b(latest|status|update|progress|working on|state of|stand|how does|how do|how is|architecture|designed?|explain)\b/i.test(text) &&
+    /\b(projects?|system|bridge|plugin|voice|pe|agent|repo|code|setup|app|lab|sweep|archive)\b/i.test(text)
+  );
+}
+
+/** A closing line: "goodbye", "bye", "take care", "have a good …". */
+export function isGoodbyeLine(text: string): boolean {
+  return /\b(good-?bye|bye(?:-bye)?|take care|have a (?:good|great|nice|lovely) (?:day|evening|night|weekend|one)|talk (?:to you )?soon)\b[.!]*\s*$/i.test(
+    text.trim(),
+  );
+}
+
+/** After the voicemail message, hang up once the bot has been quiet this long. */
+const VOICEMAIL_DONE_QUIET_MS = 2_500;
+
+/** Caller speech over the bot this long interrupts GPT-Live (shorter = backchannel). */
+const LIVE_INTERRUPT_AFTER_MS = 450;
+
+/** After the bot's goodbye, hang up when the line stays quiet this long. */
+const GOODBYE_HANGUP_MS = 4_000;
 
 /**
  * Module-level map tracking active HTTP servers by "bind:port" key.
@@ -70,6 +141,17 @@ export class VoiceCallWebhookServer {
 
   /** Media stream handler for bidirectional audio (when streaming enabled) */
   private mediaStreamHandler: MediaStreamHandler | null = null;
+  /** Voice Bridge client (owner-only Voice PE tools), when configured */
+  private voiceBridge: VoiceBridgeClient | null = null;
+  /** Bearer token the bridge must present when it posts a task result back */
+  private readonly taskToken = crypto.randomBytes(24).toString("hex");
+  /** Background bridge tasks (explain) by task id */
+  private bridgeTasks = new Map<
+    string,
+    { providerCallId: string; question: string; byText: boolean; session: import("./providers/managed-realtime-conversation.js").ManagedRealtimeConversationSession }
+  >();
+  /** Per-call conversation flow (pickup gate, silence watch), keyed by provider call id */
+  private flows = new Map<string, CallFlowState>();
   /** Per-call grace timers to end phantom calls whose stream dropped without a terminal event */
   private disconnectGraceTimers = new Map<string, NodeJS.Timeout>();
   /** Optional bridge for relaying mid-call questions to the owner's agent */
@@ -98,6 +180,13 @@ export class VoiceCallWebhookServer {
     this.coreConfig = coreConfig ?? null;
     this.assistantBridge = options?.assistantBridge ?? null;
     this.ownerMessenger = options?.ownerMessenger ?? null;
+    if (config.voiceBridge?.enabled) {
+      this.voiceBridge = new VoiceBridgeClient({
+        url: config.voiceBridge.url,
+        askPath: config.voiceBridge.askPath,
+        askPathFile: config.voiceBridge.askPathFile,
+      });
+    }
 
     // Initialize media stream handler if streaming is enabled
     if (config.streaming?.enabled) {
@@ -225,8 +314,9 @@ export class VoiceCallWebhookServer {
         if (!expected) {
           return "Error: no passphrase is configured.";
         }
-        const normalize = (s: string) =>
-          s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        // Spacing and punctuation don't matter: "open sesame now" matches
+        // "opensesamenow" (a phrase is spoken, not typed).
+        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
         const spoken = typeof args.phrase === "string" ? args.phrase : "";
         const vCall = this.manager.getCallByProviderCallId(providerCallId);
         if (normalize(spoken) === normalize(expected)) {
@@ -351,6 +441,17 @@ export class VoiceCallWebhookServer {
         }
         const call = this.manager.getCallByProviderCallId(providerCallId);
         const party = this.resolvePartyForCall(call);
+        // The voice/backend doesn't always pick explain mode for "what's the
+        // latest on <project>"; on the owner's calls, project-status and
+        // how-does-it-work questions are explain by rule.
+        if (args.mode === "explain" || (party === "first-party" && this.voiceBridge && looksLikeProjectQuestion(question))) {
+          return this.startExplain(session, providerCallId, question, party);
+        }
+        // The owner's own calls use the shared Voice Bridge (same answer-only
+        // brief, session reuse and background report-back as the Voice PE).
+        if (this.voiceBridge && party === "first-party") {
+          return this.askViaBridge(session, providerCallId, question);
+        }
         // Fast path: bounded local memory grep before the full agent turn.
         // Verified callers only — this is a judgment-free path into the
         // owner's memory (same invariant as the Home Assistant tools).
@@ -385,11 +486,38 @@ export class VoiceCallWebhookServer {
           .filter(Boolean)
           .join(", ");
         try {
-          const answer = await this.assistantBridge(question, context || "no additional context");
-          console.log(
-            `[voice-call] ask_assistant answered (${answer.length} chars) for ${providerCallId}`,
+          // Slow lookups become background tasks: after a few seconds the
+          // conversation continues ("I'm still finding out") and the answer is
+          // spoken when it arrives, instead of holding the line in silence.
+          const pending = this.assistantBridge(question, context || "no additional context");
+          const first = await Promise.race([
+            pending.then((answer) => ({ answer })),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), ASK_ASSISTANT_FOREGROUND_MS).unref?.()),
+          ]);
+          if (first) {
+            console.log(
+              `[voice-call] ask_assistant answered (${first.answer.length} chars) for ${providerCallId}`,
+            );
+            return first.answer;
+          }
+          console.log(`[voice-call] ask_assistant still running for ${providerCallId}; continuing in background`);
+          void pending.then(
+            (answer) => this.deliverLateAnswer(session, providerCallId, question, answer),
+            (err) =>
+              this.deliverLateAnswer(
+                session,
+                providerCallId,
+                question,
+                null,
+                err instanceof Error ? err.message : String(err),
+              ),
           );
-          return answer;
+          return (
+            "Still working on it (internal — do not read this aloud). Tell them briefly and " +
+            "naturally that you're still finding out and will tell them in a moment, then carry " +
+            "on the conversation. Do not call ask_assistant again for this question; the answer " +
+            "will be given to you when it arrives."
+          );
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.warn(`[voice-call] ask_assistant failed: ${message}`);
@@ -475,6 +603,68 @@ export class VoiceCallWebhookServer {
         }
       }
 
+      case "deliver_by_text": {
+        let marked = 0;
+        for (const task of this.bridgeTasks.values()) {
+          if (task.providerCallId === providerCallId) {
+            task.byText = true;
+            marked++;
+          }
+        }
+        return marked > 0
+          ? "Noted: the answer will be sent by text message instead of being read out."
+          : "There is no research in progress on this call to send by text.";
+      }
+
+      case "list_open_discussions":
+      case "open_discussion":
+      case "propose_decision": {
+        const dCall = this.manager.getCallByProviderCallId(providerCallId);
+        if (!this.voiceBridge || this.resolvePartyForCall(dCall) !== "first-party") {
+          return "Error: discussions are not available on this call.";
+        }
+        try {
+          const out =
+            name === "list_open_discussions"
+              ? await this.voiceBridge.discuss("list")
+              : name === "open_discussion"
+                ? await this.voiceBridge.discuss("brief", { query: String(args.query ?? "") })
+                : await this.voiceBridge.discuss("stage", {
+                    item: String(args.item_id ?? ""),
+                    decision: String(args.decision ?? ""),
+                  });
+          console.log(
+            `[voice-call] ${name}: ` +
+              ["count", "found", "staged"].filter((k) => k in out).map((k) => `${k}=${String(out[k])}`).join(", "),
+          );
+          return JSON.stringify(out);
+        } catch (err) {
+          console.warn(`[voice-call] ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
+          return "The project list could not be reached right now (internal). Say so briefly.";
+        }
+      }
+
+      case "set_on_hold": {
+        const flow = this.flows.get(providerCallId);
+        const onHold = args.on_hold === true;
+        if (flow) {
+          if (onHold) {
+            flow.onHoldSince = Date.now();
+            flow.silence.suspend(Date.now() + 30 * 60_000);
+          } else {
+            flow.onHoldSince = undefined;
+            flow.silence.resume(Date.now());
+          }
+        }
+        console.log(`[voice-call] ${onHold ? "On hold" : "Off hold"}: ${providerCallId}`);
+        return {
+          output: onHold
+            ? "Noted: on hold. Stay completely silent until a live person speaks to you."
+            : "Noted: a person is back. Continue the conversation.",
+          respond: !onHold,
+        };
+      }
+
       case "press_phone_keys": {
         const digits = typeof args.digits === "string" ? args.digits.trim() : "";
         if (!digits || !isValidDtmfSequence(digits)) {
@@ -493,8 +683,30 @@ export class VoiceCallWebhookServer {
       }
 
       case "end_call": {
+        // Research for the owner is still running and they haven't said
+        // goodbye: don't drop the line on them.
+        const researching = [...this.bridgeTasks.values()].some(
+          (t) => t.providerCallId === providerCallId && !t.byText,
+        );
+        const lastUser = this.manager
+          .getCallByProviderCallId(providerCallId)
+          ?.transcript.filter((t) => t.speaker === "user")
+          .at(-1)?.text;
+        if (researching && !(lastUser && /\b(bye|goodbye|hang up|that's all|gotta go|have to go)\b/i.test(lastUser))) {
+          return (
+            "Not ending: the research they asked for is still running and they haven't said goodbye " +
+            "(internal). Stay on the line; if they want to go, offer to text the answer (deliver_by_text)."
+          );
+        }
         const reason = typeof args.reason === "string" ? args.reason : "conversation complete";
-        const finalMessage = resolveFinalMessage(args.final_message);
+        const byeFlow = this.flows.get(providerCallId);
+        // GPT-Live says its own goodbye before delegating end_call; don't say a second one.
+        const alreadySaidGoodbye =
+          session.runtime === "live" && !!byeFlow?.goodbyeAt && Date.now() - byeFlow.goodbyeAt < 15_000;
+        const finalMessage = alreadySaidGoodbye ? undefined : resolveFinalMessage(args.final_message);
+        if (byeFlow) {
+          byeFlow.ending = true;
+        }
         console.log(`[voice-call] Model requested end_call (${reason}) on ${providerCallId}`);
         // From here on the call is wrapping up: disable barge-in so the other
         // party talking over the goodbye cannot cancel it or flush its audio.
@@ -506,12 +718,227 @@ export class VoiceCallWebhookServer {
           );
         });
         // Suppress the auto-response: any further speech would be cut off.
-        return { output: "Call will end after your goodbye finishes playing.", respond: false };
+        // (GPT-Live speaks the backend's final text: ask it for none, the
+        // goodbye is spoken from final_message.)
+        return {
+          output:
+            session.runtime === "live"
+              ? "The goodbye is being spoken now and the call will end. Reply with nothing further."
+              : "Call will end after your goodbye finishes playing.",
+          respond: false,
+        };
       }
 
       default:
         return `Error: unknown tool ${name}`;
     }
+  }
+
+  /**
+   * GPT-Live talked to phone menus instead of delegating keypresses; when the
+   * other side sounds like a menu, pick and press the key ourselves.
+   */
+  private maybeRouteMenu(providerCallId: string, transcript: string): void {
+    const flow = this.flows.get(providerCallId);
+    const session = flow?.session;
+    if (!flow || !session || session.runtime !== "live" || flow.ending || !looksLikeMenu(transcript)) {
+      return;
+    }
+    if (flow.menuPressedAt && Date.now() - flow.menuPressedAt < 8000) {
+      return;
+    }
+    const apiKey = this.config.streaming?.openaiApiKey || process.env.OPENAI_API_KEY;
+    const call = this.manager.getCallByProviderCallId(providerCallId);
+    if (!apiKey || !call) {
+      return;
+    }
+    const goal =
+      [
+        typeof flow.openingMessage === "string" ? flow.openingMessage : undefined,
+        Array.isArray(call.metadata?.talkingPoints) ? (call.metadata.talkingPoints as string[]).join("; ") : undefined,
+      ]
+        .filter(Boolean)
+        .join(" — ") || "reach a person who can help";
+    flow.menuPressedAt = Date.now();
+    // Stop talking over the menu at once, and keep quiet while it plays.
+    session.interrupt();
+    session.appendContext(
+      "thinking",
+      "An automated phone menu is speaking. Stay silent; the right key is pressed for you.",
+    );
+    void chooseMenuKeys({ apiKey, menuText: transcript, goal })
+      .then((decision) => {
+        if (!decision.digits || flow.ending) {
+          flow.menuPressedAt = undefined;
+          return;
+        }
+        const streamSession = this.mediaStreamHandler?.getSessionByCallId(providerCallId);
+        if (!streamSession) {
+          return;
+        }
+        this.mediaStreamHandler?.sendRawAudio(streamSession.streamSid, generateDtmfMulaw(decision.digits));
+        console.log(`[voice-call] Menu router pressed ${this.loggableText(decision.digits)} on ${providerCallId}`);
+        session.appendContext(
+          "thinking",
+          `You pressed ${decision.digits} on the phone menu (${decision.reason}). Stay quiet and listen for what comes next.`,
+        );
+      })
+      .catch((err) => {
+        flow.menuPressedAt = undefined;
+        console.warn(`[voice-call] Menu router failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+  }
+
+  /**
+   * Explain mode (as on the Voice PE): a research question about the owner's
+   * own projects, run by the Voice Bridge in the background. The result comes
+   * back to /voice/task-result and is spoken on the call if it is still up,
+   * otherwise (or on request) sent by text.
+   */
+  private async startExplain(
+    session: import("./providers/managed-realtime-conversation.js").ManagedRealtimeConversationSession,
+    providerCallId: string,
+    question: string,
+    party: string,
+  ): Promise<string> {
+    if (!this.voiceBridge || party !== "first-party") {
+      return "Explain mode is not available on this call; answer normally instead.";
+    }
+    const call = this.manager.getCallByProviderCallId(providerCallId);
+    const requestId = `phone-explain-${crypto.randomUUID()}`;
+    try {
+      const accepted = await this.voiceBridge.explain({
+        question,
+        sessionKey: phoneSessionKey("explain", call?.callId ?? providerCallId),
+        requestId,
+        callbackUrl: `http://127.0.0.1:${this.config.serve.port}/voice/task-result`,
+        callbackToken: this.taskToken,
+      });
+      if (!accepted.accepted) {
+        return `${accepted.error} (internal). Tell them briefly; offer to look into it later.`;
+      }
+      this.bridgeTasks.set(accepted.taskId, { providerCallId, question, byText: false, session });
+      console.log(`[voice-call] explain started (${accepted.taskId}) on ${providerCallId}`);
+      return (
+        "Research started (internal — do not read this aloud). Tell them in one short sentence " +
+        "that you're looking into it, it takes a few minutes, and you'll tell them on this call " +
+        "or send a text if you've hung up by then; offer the text option. Then carry on."
+      );
+    } catch (err) {
+      console.warn(`[voice-call] explain failed to start: ${err instanceof Error ? err.message : String(err)}`);
+      return "The research could not be started right now (internal). Say so briefly.";
+    }
+  }
+
+  private async askViaBridge(
+    session: import("./providers/managed-realtime-conversation.js").ManagedRealtimeConversationSession,
+    providerCallId: string,
+    question: string,
+  ): Promise<string> {
+    const call = this.manager.getCallByProviderCallId(providerCallId);
+    const requestId = `phone-ask-${crypto.randomUUID()}`;
+    try {
+      const res = await this.voiceBridge!.ask({
+        question,
+        sessionKey: phoneSessionKey("ask", call?.callId ?? providerCallId),
+        requestId,
+        callbackUrl: `http://127.0.0.1:${this.config.serve.port}/voice/task-result`,
+        callbackToken: this.taskToken,
+      });
+      if (res.background) {
+        this.bridgeTasks.set(requestId, { providerCallId, question, byText: false, session });
+        console.log(`[voice-call] bridge ask continuing in background (${requestId}) on ${providerCallId}`);
+        return (
+          "Still working on it (internal — do not read this aloud). Tell them briefly you're still " +
+          "finding out and will tell them in a moment; carry on. Don't ask again; the answer will be " +
+          "given to you when it arrives."
+        );
+      }
+      console.log(`[voice-call] bridge ask answered (${res.answer.length} chars) on ${providerCallId}`);
+      return res.answer;
+    } catch (err) {
+      console.warn(`[voice-call] bridge ask failed: ${err instanceof Error ? err.message : String(err)}`);
+      return (
+        "The answer is not available right now (internal — do not read this aloud). Tell them " +
+        "naturally, once, that you can't get to it this moment and you'll text them shortly."
+      );
+    }
+  }
+
+  /** A Voice Bridge task finished: speak it on the call, or text it. */
+  private async deliverBridgeTask(result: TaskResult): Promise<void> {
+    const task = this.bridgeTasks.get(result.taskId);
+    if (!task) {
+      console.warn(`[voice-call] task result for unknown task ${result.taskId}`);
+      return;
+    }
+    this.bridgeTasks.delete(result.taskId);
+    const call = this.manager.getCallByProviderCallId(task.providerCallId);
+    const live = !!call && task.session.isConnected() && !this.flows.get(task.providerCallId)?.ending;
+    const textBody = result.text || result.spoken;
+    if (!live || task.byText) {
+      if (this.ownerMessenger && result.ok && textBody) {
+        await this.ownerMessenger(`${task.question.slice(0, 120)}\n\n${textBody}`).catch((err) =>
+          console.warn(`[voice-call] explain text failed: ${err instanceof Error ? err.message : String(err)}`),
+        );
+      }
+      console.log(`[voice-call] explain ${result.taskId} delivered by text (${live ? "requested" : "call ended"})`);
+      if (live && task.byText) {
+        task.session.instruct(
+          "The research you were doing has finished and was sent to them by text. Mention that briefly at a natural moment.",
+        );
+      }
+      return;
+    }
+    await this.deliverLateAnswer(
+      task.session,
+      task.providerCallId,
+      task.question,
+      result.ok ? result.spoken : null,
+      result.ok ? undefined : "research failed",
+    );
+    console.log(`[voice-call] explain ${result.taskId} spoken on the call`);
+  }
+
+  /**
+   * A background ask_assistant answer arrived: speak it if the call is still
+   * up (after any current speech), else keep it on the call record for the
+   * post-call report.
+   */
+  private async deliverLateAnswer(
+    session: import("./providers/managed-realtime-conversation.js").ManagedRealtimeConversationSession,
+    providerCallId: string,
+    question: string,
+    answer: string | null,
+    error?: string,
+  ): Promise<void> {
+    const call = this.manager.getCallByProviderCallId(providerCallId);
+    const flow = this.flows.get(providerCallId);
+    if (!call || !session.isConnected() || flow?.ending) {
+      const ended = call ?? this.manager.getRecentCallByProviderCallId?.(providerCallId);
+      if (ended) {
+        const late = Array.isArray(ended.metadata?.lateAnswers) ? (ended.metadata!.lateAnswers as unknown[]) : [];
+        ended.metadata = {
+          ...(ended.metadata ?? {}),
+          lateAnswers: [...late, { question, answer, error, at: Date.now() }],
+        };
+      }
+      console.log(`[voice-call] Late ask_assistant answer for ${providerCallId} arrived after the call`);
+      return;
+    }
+    const deadline = Date.now() + 20_000;
+    while (session.isResponseActive() && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    console.log(`[voice-call] Delivering late ask_assistant answer on ${providerCallId}`);
+    session.instruct(
+      answer
+        ? `The answer to the earlier question ("${question}") just came back: ${answer}\n` +
+            "Tell them now, briefly and in your own words, then continue the conversation."
+        : `The earlier question ("${question}") could not be answered right now (internal). ` +
+            "Tell them naturally, once, that you couldn't get it just now and it will be followed up, " +
+            "and record the open item with report_call_outcome.",
+    );
   }
 
   /**
@@ -681,6 +1108,38 @@ export class VoiceCallWebhookServer {
       maxPendingConnections: this.config.streaming?.maxPendingConnections,
       maxPendingConnectionsPerIp: this.config.streaming?.maxPendingConnectionsPerIp,
       maxConnections: this.config.streaming?.maxConnections,
+      filterInboundAudio: (callId: string, mulaw: Buffer) => this.routeInboundAudio(callId, mulaw),
+      createRecorder: (callId: string) => {
+        if (!this.config.recording?.enabled) {
+          return null;
+        }
+        const call = this.manager.getCallByProviderCallId(callId);
+        const file = recordingFilePath(this.manager.getStorePath(), call?.callId ?? callId);
+        console.log(`[voice-call] Recording call ${call?.callId ?? callId}`);
+        return new CallRecorder(file);
+      },
+      onRecordingSaved: (callId: string, saving) => {
+        const done = saving.then((result) => {
+          if (!result) {
+            return;
+          }
+          const call =
+            this.manager.getCallByProviderCallId(callId) ??
+            this.manager.getRecentCallByProviderCallId?.(callId);
+          if (call) {
+            call.metadata = {
+              ...(call.metadata ?? {}),
+              recordingPath: result.path,
+              recordingDurationMs: result.durationMs,
+            };
+          }
+          console.log(`[voice-call] Recording saved: ${result.path} (${Math.round(result.durationMs / 1000)}s)`);
+        });
+        this.manager.addFinalizeBarrier?.(callId, done);
+      },
+      onConversationFailed: (callId: string, _streamSid: string, reason: string) => {
+        void this.failCall(callId, reason);
+      },
       shouldAcceptStream: ({ callId, token }) => {
         const call = this.manager.getCallByProviderCallId(callId);
         if (!call) {
@@ -695,7 +1154,7 @@ export class VoiceCallWebhookServer {
         }
         return true;
       },
-      onTranscript: (providerCallId: string, transcript: string) => {
+      onTranscript: (providerCallId: string, transcript: string, spokenAt?: number) => {
         console.log(
           `[voice-call] Transcript for ${providerCallId}: ${this.loggableText(transcript)}`,
         );
@@ -705,18 +1164,34 @@ export class VoiceCallWebhookServer {
           (this.provider as TwilioProvider).clearTtsQueue(providerCallId);
         }
 
-        const call = this.manager.getCallByProviderCallId(providerCallId);
+        if (isConversationMode) {
+          this.maybeRouteMenu(providerCallId, transcript);
+        }
+
+        // The other party said something after our goodbye (other than their
+        // own goodbye): the conversation is not over.
+        const userFlow = this.flows.get(providerCallId);
+        if (userFlow) {
+          userFlow.userGoodbyeAt = isGoodbyeLine(transcript) || /^\W*(bye|goodbye)\b/i.test(transcript.trim()) ? Date.now() : undefined;
+        }
+        if (userFlow?.goodbyeAt && !isGoodbyeLine(transcript) && !/^(thanks?|thank you|you too|ok(ay)?|cheers)\b/i.test(transcript.trim())) {
+          userFlow.goodbyeAt = undefined;
+        }
+
+        // Recently-ended calls still take lines still being transcribed at hangup.
+        const activeCall = this.manager.getCallByProviderCallId(providerCallId);
+        const call = activeCall ?? this.manager.getRecentCallByProviderCallId(providerCallId);
         if (!call) {
           console.warn(`[voice-call] No active call found for provider ID: ${providerCallId}`);
           return;
         }
 
         const event: NormalizedEvent = {
-          id: `stream-transcript-${Date.now()}`,
+          id: `stream-transcript-${crypto.randomUUID()}`,
           type: "call.speech",
           callId: call.callId,
           providerCallId,
-          timestamp: Date.now(),
+          timestamp: spokenAt ?? Date.now(),
           transcript,
           isFinal: true,
         };
@@ -729,7 +1204,7 @@ export class VoiceCallWebhookServer {
         // killing the media stream and dropping the call.
         // IVR/gatekeeper handling in conversation mode is covered by the
         // screening-awareness system prompt injected at session start.
-        if (!isConversationMode) {
+        if (!isConversationMode && activeCall) {
           const callMode = call.metadata?.mode as string | undefined;
           const shouldRespond = call.direction === "inbound" || callMode === "conversation";
           if (shouldRespond) {
@@ -749,17 +1224,25 @@ export class VoiceCallWebhookServer {
           console.log(`[voice-call] Partial for ${callId}: ${partial}`);
         }
       },
-      onResponseTranscript: (providerCallId: string, transcript: string) => {
-        const call = this.manager.getCallByProviderCallId(providerCallId);
+      onResponseTranscript: (providerCallId: string, transcript: string, spokenAt?: number) => {
+        const call =
+          this.manager.getCallByProviderCallId(providerCallId) ??
+          this.manager.getRecentCallByProviderCallId(providerCallId);
         if (!call) {
           return;
         }
+        const byeFlow = this.flows.get(providerCallId);
+        if (byeFlow) {
+          byeFlow.lastBotLineAt = Date.now();
+          byeFlow.goodbyeAt = isGoodbyeLine(transcript) ? Date.now() : undefined;
+          byeFlow.silence.activity(Date.now(), "bot");
+        }
         const event: NormalizedEvent = {
-          id: `stream-ai-transcript-${Date.now()}`,
+          id: `stream-ai-transcript-${crypto.randomUUID()}`,
           type: "call.speaking",
           callId: call.callId,
           providerCallId,
-          timestamp: Date.now(),
+          timestamp: spokenAt ?? Date.now(),
           text: transcript,
         };
         this.manager.processEvent(event);
@@ -774,6 +1257,7 @@ export class VoiceCallWebhookServer {
         if (this.provider.name === "twilio") {
           (this.provider as TwilioProvider).registerCallStream(callId, streamSid);
         }
+        this.manager.onMediaStreamStarted(callId);
 
         // STT mode only: speak initial message via telephony TTS.
         // Conversation mode uses onConversationConnected + triggerGreeting.
@@ -787,8 +1271,10 @@ export class VoiceCallWebhookServer {
       },
       onDisconnect: (callId: string) => {
         console.log(`[voice-call] Media stream disconnected: ${callId}`);
+        this.disposeFlow(callId);
         this.rejectPendingOwnerQuestion(callId);
         const disconnectedCall = this.manager.getCallByProviderCallId(callId);
+        this.manager.onMediaStreamStopped(callId);
         if (this.provider.name === "twilio") {
           (this.provider as TwilioProvider).unregisterCallStream(callId);
         }
@@ -967,6 +1453,23 @@ export class VoiceCallWebhookServer {
                         "Set true ONLY when a previous quick-memory result for this " +
                         "same question did not answer it — forces the full assistant.",
                     },
+                    ...(this.voiceBridge
+                      ? {
+                          mode: {
+                            type: "string",
+                            enum: ["answer", "explain"],
+                            description:
+                              "OWNER CALLS ONLY. \"explain\" for a question about how the owner's own " +
+                              "software, projects, systems or code work, are designed, or stand " +
+                              "(status, architecture, 'how does our X do Y', 'what's the state of " +
+                              "project Z', 'what's the latest on X', 'what is X working on'): the assistant reads the code and documents, takes a few " +
+                              "minutes, and the explanation is spoken later on this call or texted. " +
+                              "A follow-up to an earlier explanation is also \"explain\"; put the " +
+                              "earlier topic in the question so it stands on its own. Otherwise " +
+                              "\"answer\" (the default).",
+                          },
+                        }
+                      : {}),
                   },
                   required: ["question"],
                 },
@@ -1067,6 +1570,77 @@ export class VoiceCallWebhookServer {
             required: ["digits"],
           },
         },
+        ...(this.voiceBridge
+          ? [
+              {
+                name: "deliver_by_text",
+                description:
+                  "OWNER CALLS ONLY. The owner wants the answer to research still in progress " +
+                  "(an explanation they were told would take a few minutes) sent as a text " +
+                  "message instead of spoken: 'text would be great', 'send it by text'. Call it " +
+                  "only for that; it changes nothing else.",
+                parameters: { type: "object", properties: {} },
+              },
+              ...(this.config.voiceBridge?.discussions !== false
+                ? [
+                    {
+                      name: "list_open_discussions",
+                      description:
+                        "OWNER CALLS ONLY. The open items the owner's projects are waiting on: " +
+                        "questions, decisions and blockers, newest first. Use for 'what needs me?', " +
+                        "'what did my projects send me?'. Say only each item's spoken name, topic and " +
+                        "question, briefly; never read anything else aloud from the list.",
+                      parameters: { type: "object", properties: {} },
+                    },
+                    {
+                      name: "open_discussion",
+                      description:
+                        "OWNER CALLS ONLY. Load one open item to talk it through, by its spoken name " +
+                        "(for example 'Project 4') or a few words of its topic. Say the topic and the " +
+                        "question, then discuss it with the owner. The options are fine to say. Read " +
+                        "the 'details' (recommendation and context) aloud ONLY when the owner asks for " +
+                        "them; call this again to get them back.",
+                      parameters: {
+                        type: "object",
+                        properties: { query: { type: "string", description: "Spoken name or topic words" } },
+                        required: ["query"],
+                      },
+                    },
+                    {
+                      name: "propose_decision",
+                      description:
+                        "OWNER CALLS ONLY. Record the owner's decision on an open item, as a PROPOSAL " +
+                        "only. Call it ONLY after you have read the decision back in one sentence " +
+                        "('So the decision is …; shall I record that?') and the owner clearly said yes. " +
+                        "Never call it for anyone else's words or on a guess. It is not final: tell the " +
+                        "owner a text is coming and the decision counts once they confirm it there.",
+                      parameters: {
+                        type: "object",
+                        properties: {
+                          item_id: { type: "string", description: "The item's id from open_discussion" },
+                          decision: { type: "string", description: "The decision, one or two plain sentences" },
+                        },
+                        required: ["item_id", "decision"],
+                      },
+                    },
+                  ]
+                : []),
+            ]
+          : []),
+        {
+          name: "set_on_hold",
+          description:
+            "Tell the system you have been put on hold (hold music or a 'please hold' " +
+            "recording) or that a live person is back. While on hold, stay silent and wait; " +
+            "call this with on_hold=false as soon as a person speaks to you again.",
+          parameters: {
+            type: "object",
+            properties: {
+              on_hold: { type: "boolean", description: "true = now on hold; false = a person is back." },
+            },
+            required: ["on_hold"],
+          },
+        },
       ];
 
       const baseConversationProvider = new OpenAIRealtimeConversationProvider({
@@ -1081,11 +1655,45 @@ export class VoiceCallWebhookServer {
         language: this.config.streaming?.language,
         tools: callTools,
       });
+      const live = this.config.streaming?.live;
+      // Per-call tools: the owner-only tools (and ask_assistant's explain
+      // mode) are sent to the model only on calls with the verified owner; on
+      // any other call the model never sees them.
+      const toolsForCall = (providerCallId: string): RealtimeToolDefinition[] => {
+        const call = this.manager.getCallByProviderCallId(providerCallId);
+        return toolsForParty(callTools, this.resolvePartyForCall(call));
+      };
+      const sessionFactoriesFor = (tools: RealtimeToolDefinition[]): ConversationSessionFactory[] => {
+        const liveFactory: ConversationSessionFactory = {
+          runtime: "live",
+          createSession: () =>
+            new GptLiveConversationSession({
+              apiKey,
+              model: live?.model ?? "gpt-live-1",
+              voice: live?.voice,
+              backendModel: live?.backendModel ?? "gpt-6-luna",
+              reasoningEffort: live?.reasoningEffort,
+              serviceTier: live?.serviceTier,
+              systemPrompt: this.config.streaming?.realtimeSystemPrompt,
+              tools,
+            }),
+        };
+        const realtimeFactory: ConversationSessionFactory = {
+          runtime: "realtime",
+          createSession: () => baseConversationProvider.createSession(tools),
+        };
+        return this.config.streaming?.runtime === "live"
+          ? live?.fallbackToRealtime === false
+            ? [liveFactory]
+            : [liveFactory, realtimeFactory]
+          : [realtimeFactory];
+      };
       const conversationProvider = {
         createSession: (providerCallId: string) => {
           const policy = resolveDevicePolicy(this.config).realtime;
+          const tools = toolsForCall(providerCallId);
           const managed = createManagedRealtimeConversationSession({
-            provider: baseConversationProvider,
+            provider: sessionFactoriesFor(tools),
             policy,
           });
           managed.onToolCall(async (name, args): Promise<RealtimeToolResult> => {
@@ -1096,6 +1704,10 @@ export class VoiceCallWebhookServer {
             // Policy-driven closes (idle/max-session) would otherwise leave the
             // caller in dead air: the phone call stays up but nobody is home.
             // End the call gracefully instead.
+            if (event.type === "realtime.failed") {
+              void this.failCall(providerCallId, String(event.detail?.reason ?? "session_failed"));
+              return;
+            }
             if (
               event.type === "realtime.idle_timeout" ||
               event.type === "realtime.max_session_reached"
@@ -1206,8 +1818,17 @@ export class VoiceCallWebhookServer {
               `Today's date is ${new Date().toISOString().slice(0, 10)}. ` +
               "Never invent calendar details.\n"
             : "";
+          const ownerToolsGuidance =
+            this.voiceBridge && this.resolvePartyForCall(call) === "first-party"
+              ? "- You are talking to the owner. As on their home voice assistant, you can: research how " +
+                "their own projects and systems work (ask_assistant with mode \"explain\": takes minutes, " +
+                "say so and carry on; offer to text it with deliver_by_text), and go through what their " +
+                "projects are waiting on (list_open_discussions, open_discussion, propose_decision after a " +
+                "read-back and their clear yes).\n"
+              : "";
           const toolGuidancePrompt =
             "Call management tools:\n" +
+            ownerToolsGuidance +
             bridgeGuidance +
             homeGuidance +
             calendarGuidance +
@@ -1225,6 +1846,30 @@ export class VoiceCallWebhookServer {
             "- Speak ONE conversational turn at a time and keep it short. Do not stack a greeting plus a long pitch in one breath — greet, pause for a response, then continue.\n" +
             "- When the conversation is over, do NOT speak a wrap-up or goodbye sentence yourself: go straight to end_call — final_message is your entire goodbye and the only one that will be heard.";
 
+          const openingPurpose =
+            call?.direction === "outbound" && typeof call.metadata?.initialMessage === "string"
+              ? call.metadata.initialMessage
+              : undefined;
+          const openingPrompt =
+            call?.direction === "outbound"
+              ? "OPENING: Wait for the other side to speak first. When they answer, reply to what they " +
+                "actually said in ONE short, natural opening that identifies you" +
+                (openingPurpose
+                  ? ` and gives the purpose of the call in your own words: ${openingPurpose}.`
+                  : ".") +
+                " Do not read instructions aloud and do not introduce yourself again later in the call."
+              : undefined;
+          const situationsPrompt =
+            "HANDLING THE UNEXPECTED:\n" +
+            "- Hold music or a recorded 'please hold' message: use set_on_hold (on_hold=true) and stay silent; when a live person speaks again, use set_on_hold (on_hold=false) and continue.\n" +
+            "- An automated menu: let the prompt finish, then press the right keys with press_phone_keys; do not talk to the menu.\n" +
+            "- A call-screening assistant asks who is calling: say your name, who you are calling for and why, in one sentence, then wait.\n" +
+            "- The wrong person answers: say who you were trying to reach, ask politely whether they can help or pass a message, and never share private details with them.\n" +
+            "- They speak another language: switch to that language if you can.\n" +
+            "- A bad line (you can't make out what they said): say so briefly and ask them to repeat; don't guess.\n" +
+            "- They interrupt you: stop, listen, and answer what they said; don't restart your previous sentence.\n" +
+            "- When they say goodbye, say a brief goodbye back and end the call; don't start re-confirming details then.\n" +
+            "- Ask only for what the task says. Never invent preferences, requests or details (seating, dietary needs, names, numbers) that you were not given; if they ask about something you don't know, say you'll check.";
           // Merge base system prompt + device policy + call context + screening + tool guidance into updated instructions
           const promptParts = [
             this.config.streaming?.realtimeSystemPrompt,
@@ -1232,6 +1877,8 @@ export class VoiceCallWebhookServer {
             callContextPrompt,
             inboundSecurityPrompt,
             screeningPrompt,
+            openingPrompt,
+            situationsPrompt,
             toolGuidancePrompt,
           ].filter(Boolean);
           if (promptParts.length > 0) {
@@ -1241,6 +1888,19 @@ export class VoiceCallWebhookServer {
           const initialMessage = call?.metadata?.initialMessage as string | undefined;
           if (call?.metadata?.initialMessage) {
             delete call.metadata.initialMessage;
+          }
+          const flow = this.ensureFlow(callId);
+          if (flow) {
+            flow.session = session;
+            if (flow.gate) {
+              // Outbound: the opening waits for the pickup gate (the other side's
+              // first words, or the AMD verdict). Keep the purpose for then.
+              flow.openingMessage = initialMessage;
+              if (flow.pendingRelease) {
+                this.applyRelease(flow, flow.pendingRelease);
+              }
+              return;
+            }
           }
           session.triggerGreeting(initialMessage);
         },
@@ -1454,6 +2114,10 @@ export class VoiceCallWebhookServer {
       };
     }
 
+    if (url.pathname === "/voice/task-result") {
+      return this.handleTaskResult(req);
+    }
+
     if (!this.isWebhookPathMatch(url.pathname, webhookPath)) {
       return { statusCode: 404, body: "Not Found" };
     }
@@ -1511,6 +2175,31 @@ export class VoiceCallWebhookServer {
     };
   }
 
+  /** The Voice Bridge posts background task results here (loopback, bearer token). */
+  private async handleTaskResult(req: http.IncomingMessage): Promise<WebhookResponsePayload> {
+    if (req.method !== "POST" || !this.voiceBridge) {
+      return { statusCode: 404, body: "Not Found" };
+    }
+    const remote = req.socket.remoteAddress ?? "";
+    const loopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+    const authorized = req.headers.authorization === `Bearer ${this.taskToken}`;
+    if (!loopback || !authorized) {
+      return { statusCode: 401, body: "Unauthorized" };
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(await this.readBody(req, 64 * 1024, 10_000));
+    } catch {
+      return { statusCode: 400, body: "Bad Request" };
+    }
+    const result = parseTaskResult(body);
+    if (!result) {
+      return { statusCode: 400, body: "Bad Request" };
+    }
+    void this.deliverBridgeTask(result);
+    return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: '{"ok":true}' };
+  }
+
   private processParsedEvents(events: NormalizedEvent[]): void {
     for (const event of events) {
       try {
@@ -1525,18 +2214,50 @@ export class VoiceCallWebhookServer {
   }
 
   /**
+   * Feed already-normalized provider events (status, AMD) through the same
+   * path as verified webhooks. Used by the real-audio lab to simulate Twilio
+   * callbacks without HTTP signatures.
+   */
+  injectProviderEvents(events: NormalizedEvent[]): void {
+    this.processParsedEvents(events);
+  }
+
+  /**
    * Apply the configured answering-machine policy once Twilio's async AMD
    * reports what picked up. With DetectMessageEnd, machine_end_* arrives
    * right after the voicemail greeting finishes — i.e. at the beep.
    */
   private handleAmdResult(providerCallId: string, answeredBy: string): void {
     console.log(`[voice-call] AMD result for ${providerCallId}: ${answeredBy}`);
-    const isMachine = answeredBy.startsWith("machine") || answeredBy === "fax";
+    const gateFlow = this.flows.get(providerCallId);
+    if (gateFlow?.gate && !gateFlow.gate.isReleased) {
+      const policy = this.config.amd?.onMachine ?? "leave-message";
+      const isEndOfGreeting = answeredBy.startsWith("machine_end") || answeredBy === "fax";
+      if (isEndOfGreeting && policy === "hangup") {
+        const call = this.manager.getCallByProviderCallId(providerCallId);
+        if (call) {
+          console.log(`[voice-call] AMD policy hangup: ending ${call.callId}`);
+          void this.manager.endCall(call.callId).catch(() => {});
+        }
+        return;
+      }
+      const release =
+        isEndOfGreeting && policy === "continue"
+          ? gateFlow.gate.onAmd("human")
+          : gateFlow.gate.onAmd(answeredBy);
+      if (release) {
+        this.applyRelease(gateFlow, release);
+      }
+      return;
+    }
+    const isMachine =
+      (answeredBy.startsWith("machine_end") && answeredBy !== "machine_end_other") || answeredBy === "fax";
     if (!isMachine) {
       return;
     }
     const policy = this.config.amd?.onMachine ?? "leave-message";
     const call = this.manager.getCallByProviderCallId(providerCallId);
+    const flow = this.flows.get(providerCallId);
 
     if (policy === "hangup") {
       if (call) {
@@ -1556,12 +2277,330 @@ export class VoiceCallWebhookServer {
       console.warn(`[voice-call] AMD leave-message: no live conversation session for ${providerCallId}`);
       return;
     }
-    conv.instruct(
-      "An answering machine picked up — you are recording a voicemail now (the beep has " +
-        "sounded). Leave ONE concise message: who you are, why you called, and how to reach " +
-        "the owner back if appropriate. Do not ask questions or wait for replies. When the " +
-        "message is complete, use end_call with a brief final_message sign-off.",
-    );
+    if (flow) {
+      flow.voicemailSince = Date.now();
+    }
+    conv.instruct(VOICEMAIL_INSTRUCTION);
+    this.armVoicemailCap(providerCallId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Call flow: pickup gate, silence watch, failures
+  // ---------------------------------------------------------------------------
+
+  private ensureFlow(providerCallId: string): CallFlowState | null {
+    const existing = this.flows.get(providerCallId);
+    if (existing) {
+      return existing;
+    }
+    const call = this.manager.getCallByProviderCallId(providerCallId);
+    if (!call) {
+      return null;
+    }
+    const now = Date.now();
+    const flow: CallFlowState = {
+      providerCallId,
+      direction: call.direction,
+      detector: new SpeechDetector(),
+      gate:
+        call.direction === "outbound" && call.metadata?.mode !== "notify"
+          ? new PickupGate(now, { amdEnabled: this.config.amd?.enabled ?? false })
+          : null,
+      held: [],
+      silence: new SilenceWatch(now),
+      session: null,
+      pendingRelease: null,
+      ticker: null,
+      ending: false,
+      voicemailTimer: null,
+      failed: false,
+    };
+    flow.ticker = setInterval(() => this.tickFlow(flow), 250);
+    flow.ticker.unref?.();
+    this.flows.set(providerCallId, flow);
+    return flow;
+  }
+
+  private disposeFlow(providerCallId: string): void {
+    const flow = this.flows.get(providerCallId);
+    if (!flow) {
+      return;
+    }
+    if (flow.ticker) clearInterval(flow.ticker);
+    if (flow.voicemailTimer) clearTimeout(flow.voicemailTimer);
+    this.flows.delete(providerCallId);
+  }
+
+  /** Caller audio on its way to the model: held (silence sent) until pickup is decided. */
+  private routeInboundAudio(providerCallId: string, mulaw: Buffer): Buffer[] {
+    const flow = this.ensureFlow(providerCallId);
+    if (!flow) {
+      return [mulaw];
+    }
+    const now = Date.now();
+    const event = flow.detector.push(mulawToPcm(mulaw), now);
+    if (event || flow.detector.isActive()) {
+      flow.silence.activity(now);
+    }
+    if (!flow.detector.isActive()) {
+      flow.interruptSent = false;
+    } else if (
+      !flow.interruptSent &&
+      flow.session?.runtime === "live" &&
+      flow.detector.activeForMs(now) >= LIVE_INTERRUPT_AFTER_MS &&
+      flow.session.isResponseActive()
+    ) {
+      // Talking over the bot for a moment (not a short "mm-hm"): yield now.
+      flow.interruptSent = true;
+      flow.session.interrupt();
+    }
+    if (!flow.gate || flow.gate.isReleased) {
+      if (flow.held.length > 0) {
+        const backlog = flow.held;
+        flow.held = [];
+        return [...backlog, mulaw];
+      }
+      return [mulaw];
+    }
+    flow.held.push(mulaw);
+    if (flow.held.length > MAX_HELD_FRAMES) {
+      flow.held.shift();
+    }
+    if (event) {
+      const release = flow.gate.onSpeech(event, flow.detector.isActive());
+      if (release) {
+        this.applyRelease(flow, release);
+        if (release.replay) {
+          const backlog = flow.held;
+          flow.held = [];
+          return backlog;
+        }
+        flow.held = [];
+        return [mulaw];
+      }
+    }
+    return [MULAW_SILENCE_FRAME];
+  }
+
+  private tickFlow(flow: CallFlowState): void {
+    const now = Date.now();
+    if (flow.gate && !flow.gate.isReleased) {
+      const release = flow.gate.tick(now, flow.detector.hasSpoken(), flow.detector.isActive());
+      if (release) {
+        if (!release.replay) {
+          flow.held = [];
+        }
+        this.applyRelease(flow, release);
+      }
+      return;
+    }
+    const session = flow.session;
+    if (!session || flow.ending || flow.failed) {
+      return;
+    }
+    const callRec = this.manager.getCallByProviderCallId(flow.providerCallId);
+    const since = callRec?.answeredAt ?? callRec?.startedAt;
+    const maxMs = this.config.maxDurationSeconds * 1000;
+    if (!flow.wrapUpWarned && since && maxMs > 120_000 && now - since >= maxMs - 60_000) {
+      flow.wrapUpWarned = true;
+      console.log(`[voice-call] One minute left on ${flow.providerCallId}`);
+      session.instruct(
+        "The call must end in about one minute. At the next natural pause, wrap up: confirm " +
+          "anything agreed, record the outcome, and end the call politely.",
+      );
+    }
+    // Voicemail: the message has been left (a bot line finished after the
+    // beep) and nothing more is coming: hang up, whether or not the model
+    // remembered end_call.
+    if (
+      flow.voicemailSince &&
+      flow.lastBotLineAt &&
+      flow.lastBotLineAt > flow.voicemailSince &&
+      !session.isResponseActive() &&
+      now - flow.lastBotLineAt >= VOICEMAIL_DONE_QUIET_MS
+    ) {
+      flow.goodbyeAt = flow.lastBotLineAt - GOODBYE_HANGUP_MS; // reuse the hang-up path below
+    }
+    // The other party said goodbye, the bot has answered, and the line is
+    // quiet: the conversation is over even if the model didn't end it.
+    if (
+      flow.userGoodbyeAt &&
+      flow.lastBotLineAt &&
+      flow.lastBotLineAt > flow.userGoodbyeAt &&
+      !flow.goodbyeAt
+    ) {
+      flow.goodbyeAt = flow.lastBotLineAt;
+    }
+    // Safety net: the bot said goodbye and the line went quiet, but nothing
+    // ended the call (the model never used end_call). Hang up.
+    if (
+      flow.goodbyeAt &&
+      now - flow.goodbyeAt >= GOODBYE_HANGUP_MS &&
+      !session.isResponseActive() &&
+      !flow.detector.isActive() &&
+      now - flow.detector.lastSpeech() >= 1500
+    ) {
+      flow.ending = true;
+      console.log(`[voice-call] Hanging up ${flow.providerCallId}: goodbye said, line quiet`);
+      const endCallRec = this.manager.getCallByProviderCallId(flow.providerCallId);
+      const streamSession = this.mediaStreamHandler?.getSessionByCallId(flow.providerCallId);
+      void (async () => {
+        if (streamSession && this.mediaStreamHandler) {
+          await this.mediaStreamHandler.waitForPlayoutDrained(streamSession.streamSid, 5000);
+        }
+        if (endCallRec) {
+          await this.manager.endCall(endCallRec.callId).catch(() => {});
+        }
+      })();
+      return;
+    }
+    const researching = [...this.bridgeTasks.values()].some((t) => t.providerCallId === flow.providerCallId);
+    const busy =
+      researching ||
+      session.isResponseActive() ||
+      (session as unknown as { isBusy?: () => boolean }).isBusy?.() === true ||
+      this.pendingOwnerQuestions.has(this.manager.getCallByProviderCallId(flow.providerCallId)?.callId ?? "");
+    if (busy) {
+      flow.silence.activity(now, "bot");
+      return;
+    }
+    const action = flow.silence.tick(now);
+    if (action === "check-in") {
+      console.log(`[voice-call] Silence check-in on ${flow.providerCallId}`);
+      session.instruct(
+        "Nobody has said anything for a while. Briefly and naturally check whether the other " +
+          "person is still there (one short question). If you are on hold, say nothing.",
+      );
+    } else if (action === "end") {
+      console.log(`[voice-call] Ending ${flow.providerCallId} after prolonged silence`);
+      flow.ending = true;
+      session.setEndingMode(true);
+      void this.gracefulEndCall(session, flow.providerCallId, {
+        finalMessage: "It sounds like we've lost each other, so I'll let you go. Goodbye.",
+      }).catch(() => {});
+    }
+  }
+
+  /** The pickup gate decided who answered: let the model speak accordingly. */
+  private applyRelease(flow: CallFlowState, release: PickupRelease): void {
+    const session = flow.session;
+    if (!session?.isConnected()) {
+      flow.pendingRelease = release; // applied once the session connects
+      return;
+    }
+    flow.pendingRelease = null;
+    if (!release.replay) {
+      // What the gate held (e.g. a voicemail greeting) must never reach the
+      // model now: replayed speech would cut off the reply we are about to ask for.
+      flow.held = [];
+    }
+    flow.silence.activity(Date.now());
+    console.log(`[voice-call] Pickup on ${flow.providerCallId}: ${release.reason}`);
+    const call = this.manager.getCallByProviderCallId(flow.providerCallId);
+    if (call) {
+      call.metadata = { ...(call.metadata ?? {}), pickup: release.reason };
+    }
+    if (release.reason === "voicemail") {
+      const policy = this.config.amd?.onMachine ?? "leave-message";
+      if (policy === "hangup") {
+        if (call) void this.manager.endCall(call.callId).catch(() => {});
+        return;
+      }
+      // Leaving a message: the line is silent by design, so no check-ins,
+      // and the machine's own noises must not cancel the message.
+      flow.silence.suspend(Date.now() + VOICEMAIL_MAX_MS + 30_000);
+      session.setEndingMode(true);
+      flow.voicemailSince = Date.now();
+      session.instruct(
+        VOICEMAIL_INSTRUCTION +
+          (flow.openingMessage ? ` The purpose of the call: ${flow.openingMessage}.` : ""),
+      );
+      this.armVoicemailCap(flow.providerCallId);
+      return;
+    }
+    if (release.reason === "machine") {
+      session.instruct(
+        "An automated system answered (what it said is coming through now). If it is a phone " +
+          "menu, wait for the options and press the right keys with press_phone_keys; if it asks " +
+          "you to leave a message after a tone, leave ONE concise message and then use end_call; " +
+          "if a live person speaks, talk to them normally." +
+          (flow.openingMessage ? ` The purpose of the call: ${flow.openingMessage}.` : ""),
+      );
+      return;
+    }
+    if (release.reason === "silent-pickup") {
+      // Nobody said anything: open with a greeting ourselves.
+      session.triggerGreeting(flow.openingMessage);
+      return;
+    }
+    // A person (or screener) spoke: their words are replayed to the model,
+    // which answers them following the OPENING instructions. Realtime needs an
+    // explicit nudge only if its VAD misses the replayed audio.
+    const replayed = Date.now();
+    setTimeout(() => {
+      if (!session.isConnected() || session.isResponseActive() || flow.ending) {
+        return;
+      }
+      const last = this.manager.getCallByProviderCallId(flow.providerCallId)?.transcript.at(-1);
+      if (last?.speaker === "bot" && last.timestamp >= replayed) {
+        return;
+      }
+      session.triggerGreeting(flow.openingMessage);
+    }, 2500).unref?.();
+  }
+
+  private armVoicemailCap(providerCallId: string): void {
+    const flow = this.flows.get(providerCallId);
+    if (!flow || flow.voicemailTimer) {
+      return;
+    }
+    flow.voicemailTimer = setTimeout(() => {
+      const call = this.manager.getCallByProviderCallId(providerCallId);
+      if (call && !flow.ending) {
+        console.log(`[voice-call] Voicemail cap reached on ${call.callId}; hanging up`);
+        flow.ending = true;
+        void this.manager.endCall(call.callId).catch(() => {});
+      }
+    }, VOICEMAIL_MAX_MS);
+    flow.voicemailTimer.unref?.();
+  }
+
+  /**
+   * No voice session (connect failed on every runtime, or the session was
+   * lost for good): never leave the caller in dead air. Apologise with the
+   * telephony voice, then hang up.
+   */
+  private async failCall(providerCallId: string, reason: string): Promise<void> {
+    const flow = this.flows.get(providerCallId);
+    if (flow?.failed) {
+      return;
+    }
+    if (flow) {
+      flow.failed = true;
+    }
+    const call = this.manager.getCallByProviderCallId(providerCallId);
+    if (!call) {
+      return;
+    }
+    console.warn(`[voice-call] Voice session failed on ${call.callId} (${reason}); apologising and ending`);
+    call.metadata = { ...(call.metadata ?? {}), sessionFailure: reason };
+    try {
+      await this.provider.playTtsFallback?.({
+        callId: call.callId,
+        providerCallId,
+        text: "I'm sorry, I'm having trouble on my end and need to go. I'll be in touch shortly. Goodbye.",
+      });
+      const streamSession = this.mediaStreamHandler?.getSessionByCallId(providerCallId);
+      if (streamSession && this.mediaStreamHandler) {
+        await this.mediaStreamHandler.waitForPlayoutDrained(streamSession.streamSid, 10000);
+      }
+    } catch (err) {
+      console.warn(
+        "[voice-call] Failure apology could not be played:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    await this.manager.endCall(call.callId).catch(() => {});
   }
 
   private writeWebhookResponse(res: http.ServerResponse, payload: WebhookResponsePayload): void {
@@ -1631,6 +2670,35 @@ export class VoiceCallWebhookServer {
     }
   }
 }
+
+/** Tools the model is given only on calls with the verified owner. */
+const OWNER_ONLY_TOOLS = new Set(["deliver_by_text", "list_open_discussions", "open_discussion", "propose_decision"]);
+
+/** The tool list for a call: owner-only tools and explain mode only for the owner. */
+export function toolsForParty(tools: RealtimeToolDefinition[], party: string): RealtimeToolDefinition[] {
+  if (party === "first-party") {
+    return tools;
+  }
+  return tools
+    .filter((t) => !OWNER_ONLY_TOOLS.has(t.name))
+    .map((t) => {
+      if (t.name !== "ask_assistant") {
+        return t;
+      }
+      const params = t.parameters as { properties?: Record<string, unknown> };
+      const { mode: _mode, ...rest } = params.properties ?? {};
+      return { ...t, parameters: { ...t.parameters, properties: rest } };
+    });
+}
+
+/** ask_assistant waits this long in the foreground before continuing in the background. */
+const ASK_ASSISTANT_FOREGROUND_MS = 8_000;
+
+const VOICEMAIL_INSTRUCTION =
+  "You have reached voicemail and the recording has started (the beep has sounded). Leave ONE " +
+  "concise message now: who you are, who you are calling for, why you called, and how to get " +
+  "back to you if appropriate. Do not ask questions or wait for replies. When the message is " +
+  "complete, use end_call with a brief final_message sign-off.";
 
 export function resolveFinalMessage(value: unknown): string {
   if (typeof value === "string" && value.trim()) {

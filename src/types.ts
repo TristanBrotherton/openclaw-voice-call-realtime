@@ -270,6 +270,8 @@ export type GetCallStatusResult = {
   isTerminal: boolean;
   /** True when the status could not be determined (transient error) */
   isUnknown?: boolean;
+  /** When the provider says the call ended (epoch ms), if known */
+  endedAt?: number;
 };
 
 // -----------------------------------------------------------------------------

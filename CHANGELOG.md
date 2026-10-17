@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026.10.16
+
+### New
+
+- GPT-Live runtime (`streaming.runtime: "live"`, opt-in): GPT-Live talks, a
+  delegated backend model runs the call tools; 8 kHz phone audio is converted
+  to and from 24 kHz, output is paced for Twilio, and calls fall back to
+  Realtime when Live cannot connect. Voice from `streaming.live.voice`.
+- Call recording (`recording.enabled`, off by default): one stereo WAV per call
+  (other party left, the bot as heard right), referenced from the transcript
+  and the post-call report. README notes consent laws.
+- Owner tools through the Voice Bridge (`voiceBridge`, off by default): explain
+  mode, `deliver_by_text` and discussions on calls with the verified owner
+  only; the tool list is chosen per call so other callers never see them.
+- Pickup and voicemail: outbound calls wait for the other side's first words;
+  a long greeting waits for the AMD verdict; voicemail is left after the beep
+  and the call ends when it is done; menus (AMD `machine_end_other`) are
+  navigated, with a menu router on GPT-Live.
+- Conversation: silence check-in then a polite end, a one-minute wrap-up
+  warning, an on-hold tool, slow lookups continue in the background, hang-up
+  after goodbyes on a quiet line, GPT-Live interruption handling.
+- Real-audio lab (`lab/`): scripted calls against the real plugin (T1) and over
+  the real phone network (T2), two-channel recordings, latency, talk-over,
+  dead air, heard-vs-generated and an LLM judge.
+
+### Fixes
+
+- The voice no longer forgets its persona on per-response instructions
+  (calls opened with "Hi, this is ChatGPT").
+- A failed or lost voice session apologises and hangs up instead of leaving
+  dead air; reconnects keep the conversation; the idle timer counts speech,
+  not audio frames; barge-in truncates the unheard part of the reply.
+- Transcripts: restored and orphaned calls are finalized, inbound calls end
+  with the real reason and time, late lines are kept, lines are ordered by
+  when they were spoken, writes are atomic, and the transcript is rebuilt from
+  the recording when one exists; reports carry the transcript text.
+- The passphrase check ignores spacing.
+
 ## 2026.9.29
 
 ### Fixes

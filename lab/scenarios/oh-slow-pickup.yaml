@@ -1,0 +1,34 @@
+id: oh-slow-pickup
+class: outbound_human
+description: Line opens, 4 s of silence (phone still at the ear), then a hesitant "Hello?".
+direction: outbound
+call:
+  message: Ask what time the bakery opens on Saturday.
+  talking_points: [Find out Saturday opening hours]
+  call_party: third-party
+amd: { verdict: human, at_ms: 5200 }
+steps:
+  - id: pause
+    wait_silence: 4000
+    gate: { at_ms: 0 }
+  - id: hello
+    say: "Hello?"
+    voice: ash
+    instructions: Hesitant, slightly distracted.
+    expect: { max_reply_ms: 2500 }
+  - id: answer
+    say: "Oh, on Saturdays we open at seven and close at two."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: ash
+  - id: bye
+    say: "No problem. Bye now."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    gate_timeout_ms: 15000
+    voice: ash
+expect:
+  ended_by: bot
+  no_audio_before_party_speech: true
+  tools_called: [end_call]
+  goodbye_complete: true
+  no_plugin_errors: true
+limits: { max_duration_ms: 80000 }

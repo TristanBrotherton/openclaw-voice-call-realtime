@@ -18,6 +18,9 @@ Every "AI agent" can send an email. Almost none of them can call the dry cleaner
 ## Features
 
 - **Full conversation mode** — Twilio Media Streams bridged to the OpenAI Realtime API (speech-to-speech, GA protocol). Sub-second turnaround, natural barge-in when the other party interrupts.
+- **GPT-Live runtime** (opt-in, `streaming.runtime: "live"`) — OpenAI's GPT-Live voice talks while a delegated backend model runs the call tools. Phone audio is converted between 8 kHz μ-law and 24 kHz PCM, output is paced for Twilio, and a call falls back to Realtime automatically if Live can't connect.
+- **Natural pickup and voicemail** — on outbound calls the assistant waits for the other side's first words; a long greeting waits for the answering-machine verdict; voicemail is left after the beep and the call ends when it's done; phone menus are navigated without talking over them.
+- **No dead air** — a lost voice session apologises and hangs up; a silent line gets one "are you still there?" and then a polite goodbye; the call wraps up a minute before its time limit; slow lookups continue in the background while the conversation goes on.
 - **In-call tools** the voice AI uses autonomously:
   - `press_phone_keys` — synthesized DTMF touch-tones for navigating IVR menus ("press 2 for reservations")
   - `report_call_outcome` — structured result capture (status + every fact gathered: times, prices, confirmation numbers)
@@ -27,7 +30,9 @@ Every "AI agent" can send an email. Almost none of them can call the dry cleaner
   - `check_home` / `control_home` (optional) — direct Home Assistant backend: read device status ("are the doors locked?") and, when enabled, control devices ("turn off the porch light") in ~1 second, bypassing the agent. Offered only on verified owner/trusted calls.
   - `ask_owner` (optional) — mid-call text escalation: the AI messages you ("7pm is taken — is 8pm OK?"), you reply by text, and your answer flows back into the live call while the other party holds. Far lighter than a transfer.
   - `transfer_to_owner` (optional) — when the other party genuinely needs a human (payment details, authorization), the AI announces the handoff and transfers the call to your real phone.
-- **Transcripts & summaries** — every call is finalized into a Markdown transcript with an AI-generated summary and the reported outcome. Retrievable after the call via the `get_transcript` tool action.
+- **Transcripts & summaries** — every call is finalized into a Markdown transcript with an AI-generated summary and the reported outcome, including calls interrupted by a restart. Retrievable after the call via the `get_transcript` tool action.
+- **Call recording** (optional, off by default) — a stereo WAV per call (the other party / the assistant as heard), transcribed into the call's transcript. See the consent note below.
+- **Owner tools from the Voice Bridge** (optional) — on calls with the verified owner: research into the owner's own projects ("explain"), project discussions, and answers delivered by text.
 - **Post-call reports** (optional) — when a call ends, your OpenClaw agent is briefed automatically: it messages you the result and performs obvious follow-ups (adds the confirmed booking to your calendar, notes a needed retry). Calls stop being fire-and-forget.
 - **Answering-machine detection** (optional) — Twilio async AMD tells the plugin definitively when voicemail picked up; policy decides: leave a concise message after the beep (default), hang up, or continue as normal.
 - **Semantic turn detection** (optional) — `semantic_vad` understands when a speaker has finished a *thought* rather than just paused, for fewer interruptions and more natural conversations.
@@ -371,6 +376,24 @@ A direct backend for in-call home status and control — the same "bypass the ag
 
 When a call finalizes (transcript written, summary generated), the plugin runs a scoped agent turn — same mechanism as `ask_assistant` — briefing your OpenClaw agent with the result, outcome, summary, and transcript path. The agent messages you through its usual channel and handles clear follow-ups autonomously. Requires the OpenClaw subagent runtime. When enabled, the `voice_call` tool tells your agent not to poll for results — reports arrive on their own.
 
+### Owner tools from the Voice Bridge (`voiceBridge`)
+
+```jsonc
+"voiceBridge": { "enabled": true, "url": "http://127.0.0.1:3338", "askPathFile": "~/path/to/voice-pe-bridge/.ask-path" }
+```
+
+If you run the Voice PE add-on's OpenClaw bridge, calls with the verified owner get the same tools as the home voice assistant: **explain mode** (`ask_assistant` with `mode: "explain"` — research into how your own projects and systems work; the bridge works for a few minutes and the answer is spoken on the call, or texted to you if you've hung up or asked for a text with `deliver_by_text`) and **discussions** (`list_open_discussions`, `open_discussion`, `propose_decision`). The bridge posts results back to `http://127.0.0.1:<serve.port>/voice/task-result` with a per-process token. These tools refuse to run on any call that is not with the verified owner.
+
+### Call recording (`recording`) — off by default
+
+```jsonc
+"recording": { "enabled": true }
+```
+
+Saves one stereo WAV per call to `<store>/recordings/<callId>.wav`: the left channel is the other party as Twilio delivered it, the right channel is the assistant as the other party actually heard it (audio cut off by an interruption or the hangup is not in the file). The path is added to the call record, the transcript file and the post-call report, so your agent can send you the file.
+
+**Recording is off unless you turn it on.** Laws on recording phone calls differ by country and state, and some (for example California) require the consent of everyone on the call. Check what applies to you before enabling it, and tell the other party where required — the plugin does not announce the recording.
+
 ### Answering-machine detection (`amd`)
 
 ```jsonc
@@ -418,6 +441,11 @@ Default is `server_vad` (responds after `silenceDurationMs` of silence). `semant
 | `outbound.defaultMode` | `notify` | Use `conversation` for two-way calls |
 | `maxDurationSeconds` | `1800` | Hard safety cap per call |
 | `streaming.realtimeModel` | `gpt-4o-realtime-preview` | Use `gpt-realtime-2.1` |
+| `streaming.runtime` | `realtime` | `live` for GPT-Live (falls back to Realtime) |
+| `streaming.live.voice` | server default | A GPT-Live voice, e.g. `vesper`, `cedar`, `marin` |
+| `streaming.live.backendModel` | `gpt-6-luna` | Backend that runs the call tools on GPT-Live |
+| `recording.enabled` | `false` | Stereo WAV per call; check recording-consent laws first |
+| `voiceBridge.enabled` | `false` | Owner-only Voice PE tools (explain, discussions, text delivery) |
 | `streaming.realtimeVoice` | `alloy` | `alloy` `ash` `ballad` `coral` `echo` `sage` `shimmer` `verse` |
 | `streaming.realtimeSystemPrompt` | — | Base personality/instructions for the voice AI |
 | `streaming.realtimePolicy.maxSessionMs` | `7200000` | Realtime session lifetime cap; keep above `maxDurationSeconds` |
@@ -468,11 +496,15 @@ Default is `server_vad` (responds after `silenceDurationMs` of silence). `semant
 | Config rejected: "must not have additional properties" | Gateway has a stale manifest snapshot: `openclaw plugins registry --refresh` then restart the gateway. |
 | Goodbye clipped / talks over hangup | Fixed in 2026.7.7 — update. |
 
+## Real-audio lab
+
+`lab/` runs scripted phone calls against the real plugin and measures what the other side actually heard: two-channel recordings, turn latency, talk-over, dead air, clipped words, voicemail timing, keys pressed, and an LLM judge's naturalness scores, compared run against run. T1 drives the plugin in-process through a simulated Twilio media stream; T2 runs the same scenarios over the real phone network by calling your own Twilio number (the number's routing is pointed at the lab for the run and restored afterwards, and any other caller is passed straight to your live webhook). See `lab/README.md` and `docs/REAL-AUDIO-TEST-PLAN.md`.
+
 ## Development
 
 ```bash
 npm install       # dev deps include openclaw for SDK types
-npm test          # vitest, 118 tests
+npm test          # vitest
 ```
 
 Layout: `src/manager/` call state machine · `src/providers/` telephony + realtime providers · `src/media-stream.ts` Twilio↔OpenAI audio bridge · `src/webhook.ts` HTTP server + in-call tool handlers · `src/transcript.ts` finalization + summaries · `src/dtmf.ts` touch-tone synthesis.
@@ -483,7 +515,7 @@ Contributions are welcome — pull requests are happily accepted. If you're plan
 
 Found a bug or have a feature request? [Open an issue on GitHub](https://github.com/TristanBrotherton/openclaw-voice-call-realtime/issues) — please include gateway log excerpts (with `logTranscripts` off, they're privacy-safe by default) and your config with credentials removed.
 
-Before submitting a PR: `npm test` should pass (120 tests), and please keep personal data — real names, phone numbers, domains — out of tests and examples; use the generic personas already in the codebase.
+Before submitting a PR: `npm test` should pass, and please keep personal data — real names, phone numbers, domains — out of tests and examples; use the generic personas already in the codebase.
 
 ## Credits & license
 

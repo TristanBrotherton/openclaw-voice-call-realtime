@@ -1,0 +1,36 @@
+id: oh-noisy-line
+class: outbound_human
+description: Bad line - constant hiss plus a quiet, noisy talker.
+direction: outbound
+call:
+  message: Ask the bike shop if a tune-up can be done by Thursday and what it costs.
+  talking_points: [Can a tune-up be done by Thursday, Price of a standard tune-up]
+  call_party: third-party
+amd: { verdict: human, at_ms: 2500 }
+line: { noise_db: -38 }
+steps:
+  - id: hello
+    say: "Spoke and Chain, hi."
+    gate: { at_ms: 700 }
+    voice: ash
+    gain_db: -8
+    noise_db: -32
+  - id: answer
+    say: "Yeah, we can do Thursday. A standard tune-up is sixty-five dollars."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: ash
+    gain_db: -8
+    noise_db: -32
+  - id: bye
+    say: "Sure, see you Thursday."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    gate_timeout_ms: 15000
+    voice: ash
+    gain_db: -8
+    noise_db: -32
+expect:
+  ended_by: bot
+  tools_called: [report_call_outcome, end_call]
+  goodbye_complete: true
+  no_plugin_errors: true
+limits: { max_duration_ms: 90000 }

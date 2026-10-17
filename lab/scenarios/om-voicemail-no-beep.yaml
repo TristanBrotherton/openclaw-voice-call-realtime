@@ -1,0 +1,30 @@
+id: om-voicemail-no-beep
+class: outbound_machine
+description: Voicemail greeting with no beep; Twilio AMD reports machine_end_silence 1.5 s after the greeting ends.
+direction: outbound
+call:
+  message: Tell Pine Ridge Auto that Sam Taylor will pick up the car on Saturday morning instead of Friday afternoon.
+  talking_points: [Pick up on Saturday morning instead of Friday afternoon, Customer Sam Taylor]
+  call_party: third-party
+amd: { verdict: machine_end_silence, after_step: greeting, offset_ms: 1500 }
+steps:
+  - id: greeting
+    say: "You've reached Pine Ridge Auto. Our shop hours are eight to five, Monday through Friday. Please leave a message."
+    gate: { at_ms: 600 }
+    voice: onyx
+    instructions: Gruff, matter-of-fact recorded greeting.
+    machine: true
+    reply: false
+    expect: { bot_silent: true }
+  - id: record
+    wait_silence: 45000
+    reply: false
+    expect: { bot_says: "sam|taylor|saturday|pick" }
+expect:
+  ended_by: bot
+  voicemail: true
+  goodbye_complete: true
+  no_audio_before_party_speech: true
+  max_talk_over_s: 0
+  no_plugin_errors: true
+limits: { max_duration_ms: 80000, idle_end_ms: 10000 }

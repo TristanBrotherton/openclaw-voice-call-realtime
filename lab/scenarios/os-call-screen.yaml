@@ -1,0 +1,49 @@
+id: os-call-screen
+class: outbound_screener
+description: A call-screening assistant answers and asks for the caller's name and reason; then the person picks up.
+direction: outbound
+call:
+  message: Confirm with Jordan Reyes that Thursday at 4pm still works for the moving estimate at Sam Taylor's apartment.
+  talking_points: [Moving estimate Thursday at 4pm, At Sam Taylor's apartment, Confirm it still works]
+  call_party: third-party
+amd: { verdict: unknown, after_step: prompt, offset_ms: 1000 }
+steps:
+  - id: prompt
+    say: "Hi, the person you're calling is using a screening service and will get a copy of this conversation. Go ahead and say your name and why you're calling."
+    gate: { at_ms: 900 }
+    voice: nova
+    instructions: Neutral synthetic assistant voice, clear and even.
+    machine: true
+    expect: { bot_silent: true, max_reply_ms: 3000, bot_says: "sam|assistant|moving|estimate|thursday" }
+  - id: hold-on
+    say: "Thanks. Please stay on the line."
+    gate: { after_bot_done: { quiet_ms: 1200 } }
+    gate_timeout_ms: 15000
+    voice: nova
+    instructions: Neutral synthetic assistant voice.
+    machine: true
+    reply: false
+    expect: { bot_silent: true }
+  - id: pause
+    wait_silence: 5000
+    reply: false
+  - id: human
+    say: "Hello? This is Jordan."
+    voice: verse
+    expect: { max_reply_ms: 3000, bot_says: "thursday|four|4|estimate|moving" }
+  - id: confirm
+    say: "Yeah, Thursday at four still works for us. We'll see you then."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: verse
+  - id: bye
+    say: "Okay, bye now."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    gate_timeout_ms: 12000
+    voice: verse
+expect:
+  ended_by: bot
+  tools_called: [end_call]
+  goodbye_complete: true
+  no_audio_before_party_speech: true
+  no_plugin_errors: true
+limits: { max_duration_ms: 100000 }

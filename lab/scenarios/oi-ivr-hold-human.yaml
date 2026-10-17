@@ -1,0 +1,57 @@
+id: oi-ivr-hold-human
+class: outbound_ivr
+description: Phone menu ("press 1 for reservations"), hold music, then a human. Twilio AMD hears the menu as machine_end_other, as it does for many IVRs.
+direction: outbound
+call:
+  message: Ask Lakeside Kitchen for a table for four this Saturday at 6:30pm under the name Sam Taylor.
+  talking_points: [Table for 4 this Saturday at 6:30pm, Name Sam Taylor, 7pm is also fine]
+  call_party: third-party
+amd: { verdict: machine_end_other, after_step: menu, offset_ms: 1200 }
+steps:
+  - id: menu
+    say: "Thank you for calling Lakeside Kitchen. For reservations, press 1. For our hours and location, press 2. For all other questions, press 3."
+    gate: { at_ms: 600 }
+    voice: nova
+    instructions: Polished automated phone menu voice, measured pace.
+    machine: true
+    reply: false
+    expect: { bot_silent: true, dtmf: "1" }
+  - id: menu-wait
+    wait_silence: 1
+    gate: { on_dtmf: { digits: "1" } }
+    gate_timeout_ms: 20000
+    reply: false
+  - id: connecting
+    say: "Please hold while we connect you to our reservations desk."
+    gate: { after_step: { offset_ms: 500 } }
+    voice: nova
+    instructions: Polished automated phone menu voice.
+    machine: true
+    reply: false
+    expect: { bot_silent: true }
+  - id: hold
+    play: { hold_music: { ms: 14000 } }
+    machine: true
+    reply: false
+    expect: { bot_silent: true }
+  - id: human
+    say: "Thanks for holding, reservations, this is Priya. How can I help?"
+    voice: shimmer
+    expect: { max_reply_ms: 3000, bot_says: "four|saturday|six|table|reserv" }
+  - id: offer
+    say: "Saturday at six thirty for four, yes, I can do that. What's the name?"
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: shimmer
+    expect: { bot_says: "sam|taylor" }
+  - id: done
+    say: "Perfect, you're all set for Saturday."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    gate_timeout_ms: 15000
+    voice: shimmer
+expect:
+  ended_by: bot
+  tools_called: [press_phone_keys, end_call]
+  goodbye_complete: true
+  no_audio_before_party_speech: true
+  no_plugin_errors: true
+limits: { max_duration_ms: 120000 }

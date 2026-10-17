@@ -1,0 +1,34 @@
+id: oh-business-greeting
+class: outbound_human
+description: Receptionist answers with the business name; bot asks opening hours.
+direction: outbound
+call:
+  message: Ask Harbor Light Bistro for their opening hours this week, especially Monday.
+  talking_points: [Opening hours this week, Whether they are open on Monday]
+  call_party: third-party
+amd: { verdict: human, at_ms: 3500 }
+steps:
+  - id: greeting
+    say: "Good evening, Harbor Light Bistro, this is Jamie speaking, how can I help you?"
+    gate: { at_ms: 500 }
+    voice: shimmer
+    instructions: Friendly restaurant host, brisk professional pace.
+    expect: { max_reply_ms: 2500 }
+  - id: hours
+    say: "We're open five to ten, Tuesday through Sunday. We're closed on Mondays."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: shimmer
+    expect: { max_reply_ms: 2500 }
+  - id: anything-else
+    say: "You're welcome. Anything else?"
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    gate_timeout_ms: 15000
+    voice: shimmer
+expect:
+  ended_by: bot
+  tools_called: [report_call_outcome, end_call]
+  no_audio_before_party_speech: true
+  goodbye_complete: true
+  max_dead_air_s: 0
+  no_plugin_errors: true
+limits: { max_duration_ms: 80000 }

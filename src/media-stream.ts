@@ -12,6 +12,7 @@ import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import type { OpenAIRealtimeConversationProvider } from "./providers/openai-realtime-conversation.js";
 import type { ManagedRealtimeConversationSession } from "./providers/managed-realtime-conversation.js";
+import type { CallRecorder, RecordingResult } from "./call-recorder.js";
 import type {
   OpenAIRealtimeSTTProvider,
   RealtimeSTTSession,
@@ -51,6 +52,20 @@ export interface MediaStreamConfig {
   /** Callback when stream disconnects */
   onDisconnect?: (callId: string) => void;
   /**
+   * Route caller audio before it reaches the model: return the frames to send
+   * now (none while holding, or a held backlog plus the new frame on release).
+   * Unset = forward everything.
+   */
+  filterInboundAudio?: (callId: string, mulaw: Buffer, timestampMs?: number) => Buffer[];
+  /** Start a recorder for a stream (null = don't record). */
+  createRecorder?: (callId: string) => CallRecorder | null;
+  /** The call's recording was written (or failed: result null). */
+  onRecordingSaved?: (callId: string, saving: Promise<RecordingResult | null>) => void;
+  /** No voice session could be established, or it was lost for good. */
+  onConversationFailed?: (callId: string, streamSid: string, reason: string) => void;
+  /** Keep the model session open this long after the stream stops so late transcripts land. */
+  closeDelayMs?: number;
+  /**
    * Callback fired after the conversation session has connected to OpenAI Realtime.
    * Use this to trigger an initial greeting via session.triggerGreeting().
    */
@@ -71,6 +86,7 @@ interface StreamSession {
   ws: WebSocket;
   sttSession?: RealtimeSTTSession;
   conversationSession?: ManagedRealtimeConversationSession;
+  recorder?: CallRecorder | null;
 }
 
 type TtsQueueEntry = {
@@ -86,6 +102,8 @@ type PendingConnection = {
 };
 
 const DEFAULT_PRE_START_TIMEOUT_MS = 5000;
+/** Extra wait after a playout mark echoes, before audio counts as heard. */
+const PLAYOUT_TAIL_MS = 400;
 const DEFAULT_MAX_PENDING_CONNECTIONS = 32;
 const DEFAULT_MAX_PENDING_CONNECTIONS_PER_IP = 4;
 const DEFAULT_MAX_CONNECTIONS = 128;
@@ -178,8 +196,17 @@ export class MediaStreamHandler {
             if (session && message.media?.payload) {
               // Forward audio to whichever session is active
               const audioBuffer = Buffer.from(message.media.payload, "base64");
+              const ts = message.media.timestamp ? Number(message.media.timestamp) : undefined;
+              session.recorder?.addRemote(audioBuffer, ts);
               session.sttSession?.sendAudio(audioBuffer);
-              session.conversationSession?.sendAudio(audioBuffer);
+              if (session.conversationSession) {
+                const frames = this.config.filterInboundAudio
+                  ? this.config.filterInboundAudio(session.callId, audioBuffer, ts)
+                  : [audioBuffer];
+                for (const frame of frames) {
+                  session.conversationSession.sendAudio(frame);
+                }
+              }
             }
             break;
 
@@ -248,6 +275,7 @@ export class MediaStreamHandler {
       callId: callSid,
       streamSid,
       ws,
+      recorder: this.config.createRecorder?.(callSid) ?? null,
     };
 
     if (this.config.conversationProvider) {
@@ -285,6 +313,7 @@ export class MediaStreamHandler {
         })
         .catch((err) => {
           console.warn(`[MediaStream] Conversation connection failed:`, err.message);
+          this.config.onConversationFailed?.(callSid, streamSid, `connect_failed: ${err.message}`);
         });
     } else if (this.config.sttProvider) {
       const sttSession = this.config.sttProvider.createSession();
@@ -324,7 +353,29 @@ export class MediaStreamHandler {
     this.markWaiters.delete(session.streamSid);
     this.clearTtsState(session.streamSid);
     session.sttSession?.close();
-    session.conversationSession?.close();
+    const conv = session.conversationSession;
+    if (conv) {
+      // Caller audio has stopped; give in-flight transcriptions a moment to
+      // arrive before closing the model session.
+      const delay = this.config.closeDelayMs ?? 2000;
+      if (delay > 0) {
+        const t = setTimeout(() => conv.close("stream_stopped"), delay);
+        t.unref?.();
+      } else {
+        conv.close("stream_stopped");
+      }
+    }
+    if (session.recorder) {
+      const saving = session.recorder.close().catch((err) => {
+        console.warn(
+          `[MediaStream] Recording failed for ${session.callId}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+        return null;
+      });
+      session.recorder = null;
+      this.config.onRecordingSaved?.(session.callId, saving);
+    }
     this.sessions.delete(session.streamSid);
     this.config.onDisconnect?.(session.callId);
   }
@@ -425,6 +476,7 @@ export class MediaStreamHandler {
    * Audio should be mu-law encoded at 8kHz mono.
    */
   sendAudio(streamSid: string, muLawAudio: Buffer): void {
+    this.sessions.get(streamSid)?.recorder?.addBot(muLawAudio);
     this.sendToStream(streamSid, {
       event: "media",
       streamSid,
@@ -447,6 +499,7 @@ export class MediaStreamHandler {
    * Clear audio buffer (interrupt playback).
    */
   clearAudio(streamSid: string): void {
+    this.sessions.get(streamSid)?.recorder?.clearBot();
     this.sendToStream(streamSid, { event: "clear", streamSid });
   }
 
@@ -532,7 +585,11 @@ export class MediaStreamHandler {
       byName.set(name, [
         () => {
           clearTimeout(timer);
-          resolve(true);
+          // The mark echoes when Twilio reaches it in its buffer; the last
+          // audio is still on its way to the handset. A hangup right now
+          // clips the final syllable, so allow it to arrive.
+          const tail = setTimeout(() => resolve(true), PLAYOUT_TAIL_MS);
+          tail.unref?.();
         },
       ]);
       this.sendMark(streamSid, name);
@@ -572,6 +629,7 @@ export class MediaStreamHandler {
       this.clearTtsState(session.streamSid);
       session.sttSession?.close();
       session.conversationSession?.close();
+      void session.recorder?.close();
       session.ws.close();
     }
     this.sessions.clear();

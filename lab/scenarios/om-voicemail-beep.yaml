@@ -1,0 +1,36 @@
+id: om-voicemail-beep
+class: outbound_machine
+description: Standard business voicemail greeting, then a 1000 Hz beep; Twilio AMD reports machine_end_beep at the beep.
+direction: outbound
+call:
+  message: Tell Northgate Dental that Sam Taylor needs to move Thursday's 3pm cleaning to next week, and ask them to call back at 555-0142.
+  talking_points: [Move Thursday 3pm cleaning to next week, Patient Sam Taylor, Call back at 555-0142]
+  call_party: third-party
+amd: { verdict: machine_end_beep, after_step: beep, offset_ms: 150 }
+steps:
+  - id: greeting
+    say: "Hi, you've reached Northgate Dental. We can't take your call right now. Please leave your name, number, and a brief message after the tone, and we'll get back to you as soon as we can."
+    gate: { at_ms: 700 }
+    voice: alloy
+    instructions: Pre-recorded office voicemail greeting, calm and even.
+    machine: true
+    reply: false
+    expect: { bot_silent: true }
+  - id: beep
+    play: { beep: { freq: 1000, ms: 500 } }
+    gate: { after_step: { offset_ms: 400 } }
+    machine: true
+    reply: false
+    expect: { bot_silent: true }
+  - id: record
+    wait_silence: 45000
+    reply: false
+    expect: { bot_says: "sam|taylor|thursday|clean|appointment|reschedul" }
+expect:
+  ended_by: bot
+  voicemail: true
+  goodbye_complete: true
+  no_audio_before_party_speech: true
+  max_talk_over_s: 0
+  no_plugin_errors: true
+limits: { max_duration_ms: 80000, idle_end_ms: 10000 }

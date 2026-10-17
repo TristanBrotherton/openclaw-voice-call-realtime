@@ -1,0 +1,35 @@
+id: oh-quick-hello
+class: outbound_human
+description: Restaurant host picks up with a quick "Hello?"; straightforward booking for two.
+direction: outbound
+call:
+  message: Book a table for two this Friday at 7pm under the name Sam Taylor.
+  talking_points:
+    - Table for 2 people, this Friday at 7pm
+    - Name for the booking is Sam Taylor
+    - If 7pm is taken, 7:30pm is acceptable
+  call_party: third-party
+amd: { verdict: human, at_ms: 2500 }
+steps:
+  - id: hello
+    say: "Hello?"
+    gate: { at_ms: 600 }
+    voice: coral
+    expect: { max_reply_ms: 2500 }
+  - id: offer
+    say: "Sure, let me check. Yes, we have seven o'clock on Friday for two. What name should I put it under?"
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: coral
+    expect: { bot_says: "sam|taylor" }
+  - id: confirm
+    say: "Perfect, Sam Taylor, Friday at seven, party of two. You're all set."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: coral
+expect:
+  ended_by: bot
+  tools_called: [report_call_outcome, end_call]
+  no_audio_before_party_speech: true
+  goodbye_complete: true
+  max_dead_air_s: 0
+  no_plugin_errors: true
+limits: { max_duration_ms: 90000 }

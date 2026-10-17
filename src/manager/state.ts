@@ -37,9 +37,16 @@ export function transitionState(call: CallRecord, newState: CallState): void {
   }
 }
 
-export function addTranscriptEntry(call: CallRecord, speaker: "bot" | "user", text: string): void {
+export function addTranscriptEntry(
+  call: CallRecord,
+  speaker: "bot" | "user",
+  text: string,
+  /** When the line was spoken (epoch ms); defaults to now. */
+  timestamp?: number,
+): void {
   const entry: TranscriptEntry = {
-    timestamp: Date.now(),
+    timestamp:
+      typeof timestamp === "number" && Number.isFinite(timestamp) ? timestamp : Date.now(),
     speaker,
     text,
     isFinal: true,

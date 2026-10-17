@@ -1,0 +1,27 @@
+id: ib-owner-explain-text
+class: owner
+description: The owner asks for the latest on a project (explain mode, real bridge), asks for it by text, and hangs up; the answer must be texted (owner messenger) after the call.
+direction: inbound
+bridge: real
+call:
+  caller: owner
+steps:
+  - id: ask
+    say: "Hey, it's me. What's the latest on the voice bridge project?"
+    gate: { after_bot_done: { quiet_ms: 1200 } }
+    gate_timeout_ms: 8000
+    voice: echo
+  - id: text
+    say: "Actually, just text it to me. Thanks, bye."
+    gate: { after_bot_done: { quiet_ms: 1500 } }
+    gate_timeout_ms: 30000
+    voice: echo
+  - id: hangup
+    hangup: true
+    gate: { after_bot_done: { quiet_ms: 2000 } }
+    gate_timeout_ms: 15000
+expect:
+  ended_by: any
+  tools_called: [ask_assistant, deliver_by_text]
+  no_plugin_errors: true
+limits: { max_duration_ms: 90000, idle_end_ms: 8000 }

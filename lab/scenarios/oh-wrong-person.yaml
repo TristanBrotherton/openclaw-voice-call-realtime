@@ -1,0 +1,31 @@
+id: oh-wrong-person
+class: outbound_human
+description: A private person answers; the bot has the wrong number.
+direction: outbound
+call:
+  message: Book a table for two this Friday at 7pm under the name Sam Taylor.
+  talking_points: [Table for 2 this Friday at 7pm, Name Sam Taylor]
+  call_party: third-party
+amd: { verdict: human, at_ms: 2500 }
+steps:
+  - id: hello
+    say: "Hello?"
+    gate: { at_ms: 800 }
+    voice: fable
+  - id: wrong
+    say: "Uh, no, this is a private number. I think you've got the wrong number."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: fable
+    instructions: Confused, mildly annoyed.
+    expect: { bot_says: "sorry|apolog", bot_not_says: "friday at (7|seven)|sam taylor" , max_reply_ms: 2500 }
+  - id: bye
+    say: "No worries. Bye."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    gate_timeout_ms: 12000
+    voice: fable
+expect:
+  ended_by: bot
+  tools_called: [end_call]
+  goodbye_complete: true
+  no_plugin_errors: true
+limits: { max_duration_ms: 70000 }

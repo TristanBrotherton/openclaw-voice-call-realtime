@@ -1,0 +1,36 @@
+id: oh-barge-in
+class: outbound_human
+description: The other side interrupts the bot 1.2 s into its opening.
+direction: outbound
+call:
+  message: Book a table for two this Friday at 7pm under the name Sam Taylor.
+  talking_points: [Table for 2 this Friday at 7pm, Name Sam Taylor]
+  call_party: third-party
+amd: { verdict: human, at_ms: 2500 }
+steps:
+  - id: hello
+    say: "Riverside Grill, hello?"
+    gate: { at_ms: 500 }
+    voice: echo
+  - id: interrupt
+    say: "Sorry, sorry, it's really loud in here. Who is this?"
+    gate: { during_bot_speech: { offset_ms: 1200 } }
+    voice: echo
+    instructions: Raised voice, a bit rushed.
+    expect: { max_yield_ms: 1200, bot_says: "assistant|calling|behalf|book|table|reserv" }
+  - id: offer
+    say: "Okay, Friday at seven for two, that works. Name?"
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: echo
+    expect: { bot_says: "sam|taylor" }
+  - id: done
+    say: "Got it, see you then."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    gate_timeout_ms: 15000
+    voice: echo
+expect:
+  ended_by: bot
+  tools_called: [end_call]
+  goodbye_complete: true
+  no_plugin_errors: true
+limits: { max_duration_ms: 90000 }

@@ -1,0 +1,26 @@
+id: oh-hangup-mid-answer
+class: outbound_human
+description: The other side hangs up while the bot is answering.
+direction: outbound
+call:
+  message: Ask the pharmacy whether a prescription for Sam Taylor is ready.
+  talking_points: [Is the prescription for Sam Taylor ready]
+  call_party: third-party
+amd: { verdict: human, at_ms: 2500 }
+steps:
+  - id: greeting
+    say: "Pharmacy, please hold. Actually, go ahead, what do you need?"
+    gate: { at_ms: 500 }
+    voice: nova
+    instructions: Busy and impatient.
+  - id: ask
+    say: "Date of birth?"
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: nova
+  - id: hangup
+    hangup: true
+    gate: { during_bot_speech: { offset_ms: 1000 } }
+expect:
+  ended_by: party
+  no_plugin_errors: true
+limits: { max_duration_ms: 60000 }

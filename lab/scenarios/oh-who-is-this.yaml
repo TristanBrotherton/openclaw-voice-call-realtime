@@ -1,0 +1,35 @@
+id: oh-who-is-this
+class: outbound_human
+description: The other side asks "who is this?" before anything else is settled.
+direction: outbound
+call:
+  message: Ask whether the hardware store has a 10-foot extension ladder in stock.
+  talking_points: [Is a 10-foot extension ladder in stock, Price if available]
+  call_party: third-party
+amd: { verdict: human, at_ms: 2500 }
+steps:
+  - id: hello
+    say: "Yeah, hello?"
+    gate: { at_ms: 700 }
+    voice: onyx
+  - id: who
+    say: "Sorry, who is this?"
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: onyx
+    instructions: Suspicious, flat.
+    expect: { bot_says: "assistant|calling (for|on behalf)|behalf", max_reply_ms: 2500 }
+  - id: answer
+    say: "Oh, okay. Yeah, we've got one, it's a hundred and eighty-nine dollars."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: onyx
+  - id: bye
+    say: "Sure thing. Bye."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    gate_timeout_ms: 15000
+    voice: onyx
+expect:
+  ended_by: bot
+  tools_called: [report_call_outcome, end_call]
+  goodbye_complete: true
+  no_plugin_errors: true
+limits: { max_duration_ms: 90000 }

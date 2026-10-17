@@ -123,16 +123,21 @@ describe("call transcript finalization", () => {
     expect(manager.getCall(callId)).toBeUndefined();
 
     // ...but transcript stays retrievable (store fallback) and file is written.
-    const result = await manager.getTranscript(callId);
+    // transcriptPath is only reported once finalize has written the file.
+    let result: Awaited<ReturnType<typeof manager.getTranscript>>;
+    for (let i = 0; i < 500; i++) {
+      result = await manager.getTranscript(callId);
+      if (result?.transcriptPath) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
     expect(result).toBeDefined();
     expect(result?.transcript.some((t) => t.text.includes("appointment"))).toBe(true);
     expect(result?.transcriptPath).toContain(callId);
-
-    await waitFor(() => fs.existsSync(result!.transcriptPath!));
+    expect(fs.existsSync(result!.transcriptPath!)).toBe(true);
     const content = fs.readFileSync(result!.transcriptPath!, "utf-8");
     expect(content).toContain("Reminder: your appointment is at 3pm.");
     expect(content).toContain("## Transcript");
-  });
+  }, 15_000);
 
   it("finalizes via endCall (bot hangup) exactly once", async () => {
     const { manager, provider } = await createManagerHarness();

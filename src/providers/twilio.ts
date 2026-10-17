@@ -766,7 +766,7 @@ export class TwilioProvider implements VoiceCallProvider {
 
   async getCallStatus(input: GetCallStatusInput): Promise<GetCallStatusResult> {
     try {
-      const data = await guardedJsonApiRequest<{ status?: string }>({
+      const data = await guardedJsonApiRequest<{ status?: string; end_time?: string | null }>({
         url: `${this.baseUrl}/Calls/${input.providerCallId}.json`,
         method: "GET",
         headers: {
@@ -783,7 +783,12 @@ export class TwilioProvider implements VoiceCallProvider {
       }
 
       const status = normalizeProviderStatus(data.status);
-      return { status, isTerminal: isProviderStatusTerminal(status) };
+      const endedAt = data.end_time ? Date.parse(data.end_time) : Number.NaN;
+      return {
+        status,
+        isTerminal: isProviderStatusTerminal(status),
+        ...(Number.isFinite(endedAt) ? { endedAt } : {}),
+      };
     } catch {
       // Transient error — keep the call and rely on timer fallback
       return { status: "error", isTerminal: false, isUnknown: true };

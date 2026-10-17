@@ -1,0 +1,34 @@
+id: oo-owner-explain
+class: owner
+description: The assistant calls the owner (our own number plays the owner on T2); the owner asks for the latest on a project (explain via the real Voice PE bridge) and stays on until the answer is spoken.
+direction: outbound
+bridge: real
+call:
+  call_party: first-party
+  message: "Quick check-in call. Ask whether there's anything they'd like you to look into."
+steps:
+  - id: hello
+    say: "Hey."
+    gate: { at_ms: 1200 }
+    voice: echo
+  - id: ask
+    say: "Yeah, what's the latest on the dev system project?"
+    gate: { after_bot_done: { quiet_ms: 1200 } }
+    gate_timeout_ms: 10000
+    voice: echo
+  - id: hold
+    say: "Sure, I'll hang on."
+    gate: { after_bot_done: { quiet_ms: 1500 } }
+    gate_timeout_ms: 30000
+    voice: echo
+  - id: thanks
+    say: "Great, thanks. Bye."
+    gate: { after_bot_done: { quiet_ms: 2500 } }
+    gate_timeout_ms: 600000
+    voice: echo
+expect:
+  ended_by: any
+  tools_called: [ask_assistant]
+  heard_any: ["dev ?system|launcher|role|migration|repo"]
+  no_plugin_errors: true
+limits: { max_duration_ms: 720000, idle_end_ms: 10000 }

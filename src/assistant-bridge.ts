@@ -268,20 +268,56 @@ export type CallReport = {
     fallbackUsed?: boolean;
   };
   transcriptPath?: string;
+  /** False when nobody answered (busy, no-answer, failed, ...). */
+  answered?: boolean;
+  /** The transcript itself (bounded; the file at transcriptPath has all of it). */
+  transcriptText?: string;
+  /** Where transcriptText came from: the call recording or the live captions. */
+  transcriptSource?: "recording" | "live-captions";
+  transcriptTruncated?: boolean;
+  /** Local WAV recording of the call (stereo: other party left, assistant right). */
+  recordingPath?: string;
 };
 
 export type PostCallReporter = (report: CallReport) => Promise<void>;
 
+const END_REASON_TEXT: Record<string, string> = {
+  busy: "the line was busy",
+  "no-answer": "nobody answered",
+  failed: "the call could not be connected",
+  voicemail: "it went to voicemail",
+  "hangup-bot": "the call was cancelled before it was answered",
+  timeout: "it timed out before it was answered",
+  error: "the call failed with an error",
+};
+
 export function buildCallReportMessage(report: CallReport, ownerTarget?: string): string {
+  const recipient = ownerTarget
+    ? [
+        `via iMessage to exactly ${ownerTarget} now — keep it brief and lead with the result.`,
+        "Do not infer the recipient from owner allowlists, contacts, bindings, or recent sessions.",
+        "Never send this report to any other recipient.",
+      ]
+    : ["via your usual messaging channel now — keep it brief and lead with the result."];
+
+  if (report.answered === false) {
+    const reason = report.endReason ?? "unknown";
+    return [
+      "A phone call placed by your voice-call system did not connect. Tell the owner",
+      ...recipient,
+      "One or two sentences: who was called and why it did not go through. Do not retry",
+      "the call unless the owner asked for retries. Do not ask the owner questions.",
+      "",
+      `Call: ${report.direction} to ${report.counterparty}`,
+      `Outcome: not answered — ${END_REASON_TEXT[reason] ?? reason} (${reason})`,
+      ...(report.answeredBy ? [`Answered by: ${report.answeredBy}`] : []),
+      `Call ID: ${report.callId}`,
+    ].join("\n");
+  }
+
   const lines = [
     "A phone call handled by your voice-call system just ended. Report it to the owner",
-    ...(ownerTarget
-      ? [
-          `via iMessage to exactly ${ownerTarget} now — keep it brief and lead with the result.`,
-          "Do not infer the recipient from owner allowlists, contacts, bindings, or recent sessions.",
-          "Never send this report to any other recipient.",
-        ]
-      : ["via your usual messaging channel now — keep it brief and lead with the result."]),
+    ...recipient,
     "If the outcome implies an obvious follow-up you can do autonomously (add a",
     "confirmed appointment to the owner's calendar, note a callback that's needed),",
     "do it and mention that you did. Do not ask the owner questions; just inform.",
@@ -299,9 +335,30 @@ export function buildCallReportMessage(report: CallReport, ownerTarget?: string)
           "Delivery warning: the closing message was not verified as generated, captured, and played before hangup. Do not claim that a goodbye or any intended final response was heard.",
         ]
       : []),
-    ...(report.transcriptPath ? [`Full transcript: ${report.transcriptPath}`] : []),
+    ...(report.transcriptPath ? [`Full transcript file: ${report.transcriptPath}`] : []),
+    ...(report.recordingPath
+      ? [
+          `Call recording (WAV audio file): ${report.recordingPath}`,
+          "You can send this recording file to the owner as an attachment (e.g. if the call",
+          "was important or they ask for it).",
+        ]
+      : []),
     `Call ID: ${report.callId}`,
   ];
+  if (report.transcriptText?.trim()) {
+    lines.push(
+      "",
+      report.transcriptSource === "recording"
+        ? "Transcript (transcribed from the call recording — what was actually heard; for your reference, do not paste it all to the owner):"
+        : "Transcript (live captions; for your reference, do not paste it all to the owner):",
+      "--- TRANSCRIPT START ---",
+      report.transcriptText,
+      "--- TRANSCRIPT END ---",
+      ...(report.transcriptTruncated
+        ? [`(Transcript truncated; the rest is in ${report.transcriptPath ?? "the transcript file"}.)`]
+        : []),
+    );
+  }
   return lines.join("\n");
 }
 

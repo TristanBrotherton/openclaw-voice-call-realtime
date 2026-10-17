@@ -1,0 +1,38 @@
+id: oh-silent-20s
+class: outbound_human
+description: After the bot's opening the other side goes silent for 20 s, then comes back.
+direction: outbound
+call:
+  message: Ask the dry cleaner whether a suit dropped off on Monday is ready.
+  talking_points: [Is the suit dropped off Monday ready for pickup, Ticket number 4471]
+  call_party: third-party
+amd: { verdict: human, at_ms: 2500 }
+steps:
+  - id: hello
+    say: "Hello, Main Street Cleaners."
+    gate: { at_ms: 600 }
+    voice: sage
+  - id: silence
+    wait_silence: 20000
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    reply: false
+    expect: { bot_says: "still there|hello|are you there|can you hear" }
+  - id: back
+    say: "Sorry about that, I had to grab something. What was the ticket number?"
+    voice: sage
+    expect: { bot_says: "4471|four.?four.?seven.?one|forty.?four seventy.?one" }
+  - id: ready
+    say: "Yep, it's ready, you can pick it up any time after ten."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    voice: sage
+  - id: bye
+    say: "Bye."
+    gate: { after_bot_done: { quiet_ms: 900 } }
+    gate_timeout_ms: 15000
+    voice: sage
+expect:
+  ended_by: bot
+  tools_called: [end_call]
+  goodbye_complete: true
+  no_plugin_errors: true
+limits: { max_duration_ms: 110000 }

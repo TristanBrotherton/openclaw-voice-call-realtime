@@ -1,0 +1,36 @@
+id: om-voicemail-long-greeting
+class: outbound_machine
+description: A 25-second personal voicemail greeting, then a beep; AMD machine_end_beep at the beep. The bot must not speak during the greeting.
+direction: outbound
+call:
+  message: Let Morgan know Sam Taylor is running about twenty minutes late for tomorrow's 10am meeting at Elm Street Coffee.
+  talking_points: [Sam is about 20 minutes late, Tomorrow's 10am meeting, Elm Street Coffee]
+  call_party: third-party
+amd: { verdict: machine_end_beep, after_step: beep, offset_ms: 150 }
+steps:
+  - id: greeting
+    say: "Hey, this is Morgan. Thanks for calling. I'm probably out on a job site or driving right now, so I can't get to the phone. If this is about a quote, please leave your name, your address, and the best time to reach you, and I'll get back to you within one business day. If it's urgent, send me a text at this same number. Thanks, and have a great day."
+    gate: { at_ms: 800 }
+    voice: ash
+    instructions: Casual, relaxed, slightly slow personal voicemail greeting recorded on a phone.
+    machine: true
+    reply: false
+    expect: { bot_silent: true }
+  - id: beep
+    play: { beep: { freq: 1000, ms: 500 } }
+    gate: { after_step: { offset_ms: 500 } }
+    machine: true
+    reply: false
+    expect: { bot_silent: true }
+  - id: record
+    wait_silence: 45000
+    reply: false
+    expect: { bot_says: "sam|late|twenty|20|meeting|coffee" }
+expect:
+  ended_by: bot
+  voicemail: true
+  goodbye_complete: true
+  no_audio_before_party_speech: true
+  max_talk_over_s: 0
+  no_plugin_errors: true
+limits: { max_duration_ms: 100000, idle_end_ms: 10000 }

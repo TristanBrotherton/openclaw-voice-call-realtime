@@ -167,6 +167,9 @@ export async function initiateCall(
     if (mode === "notify" && initialMessage) {
       const pollyVoice = mapVoiceToPolly(resolvePreferredTtsVoice(ctx.config));
       inlineTwiml = generateNotifyTwiml(initialMessage, pollyVoice);
+      // The <Say> is played by the provider, not via speak(): remember to
+      // record it as a bot line when the call is answered.
+      callRecord.metadata = { ...(callRecord.metadata ?? {}), notifyViaTwiml: true };
       console.log(`[voice-call] Using inline TwiML for notify mode (voice: ${pollyVoice})`);
     }
 
@@ -475,13 +478,22 @@ export async function endCall(
       reason: "hangup-bot",
     });
 
-    call.state = "hangup-bot";
-    call.endedAt = Date.now();
-    call.endReason = "hangup-bot";
+    // Keep a reason set before the hangup (e.g. "timeout" from the
+    // max-duration timer) instead of overwriting it with hangup-bot.
+    const reason = call.endReason ?? "hangup-bot";
+    call.state = reason;
+    // If the media stream already stopped (e.g. the stream-loss grace timer
+    // ended this call), the conversation ended then, not now.
+    const streamStoppedAt = call.metadata?.streamStoppedAt;
+    call.endedAt =
+      typeof streamStoppedAt === "number" && streamStoppedAt >= (call.answeredAt ?? call.startedAt)
+        ? streamStoppedAt
+        : Date.now();
+    call.endReason = reason;
     persistCallRecord(ctx.storePath, call);
 
     clearMaxDurationTimer(ctx, callId);
-    rejectTranscriptWaiter(ctx, callId, "Call ended: hangup-bot");
+    rejectTranscriptWaiter(ctx, callId, `Call ended: ${reason}`);
 
     ctx.activeCalls.delete(callId);
     ctx.providerCallIdMap.delete(providerCallId);

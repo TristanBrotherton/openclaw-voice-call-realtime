@@ -1,0 +1,31 @@
+id: ib-known-caller
+class: inbound
+description: The owner calls in and asks the assistant to look something up (stubbed assistant, 2.5 s delay).
+direction: inbound
+call:
+  caller: owner
+stubs:
+  assistant:
+    - match: "dentist|appointment|thursday"
+      answer: "Sam's dentist appointment is Thursday at 3pm at Northgate Dental."
+      delay_ms: 2500
+steps:
+  - id: ask
+    say: "Hey, it's me. Can you check what time my dentist appointment is on Thursday?"
+    gate: { after_bot_done: { quiet_ms: 1200 } }
+    gate_timeout_ms: 8000
+    voice: echo
+    expect: { bot_says: "three|3" }
+  - id: thanks
+    say: "Great, thanks. That's all, bye."
+    # A person waits through a short lookup pause ("give me a moment") before moving on.
+    gate: { after_bot_done: { quiet_ms: 4000 } }
+    gate_timeout_ms: 20000
+    voice: echo
+expect:
+  ended_by: any
+  tools_called: [ask_assistant]
+  heard_any: ["three|3 ?p\\.?m"]
+  goodbye_complete: true
+  no_plugin_errors: true
+limits: { max_duration_ms: 70000, idle_end_ms: 8000 }

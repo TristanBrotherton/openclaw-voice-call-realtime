@@ -238,7 +238,7 @@ export function processEvent(ctx: EventContext, event: NormalizedEvent): void {
     case "call.speaking":
       transitionState(call, "speaking");
       if (event.text) {
-        addTranscriptEntry(call, "bot", event.text);
+        addTranscriptEntry(call, "bot", event.text, event.timestamp);
       }
       break;
 
@@ -257,7 +257,7 @@ export function processEvent(ctx: EventContext, event: NormalizedEvent): void {
           );
           break;
         }
-        addTranscriptEntry(call, "user", event.transcript);
+        addTranscriptEntry(call, "user", event.transcript, event.timestamp);
       }
       transitionState(call, "listening");
       break;

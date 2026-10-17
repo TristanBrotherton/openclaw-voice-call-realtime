@@ -89,6 +89,8 @@ export async function createManagerHarness(
     ...configOverrides,
   });
   const manager = new CallManager(config, createTestStorePath());
+  // No settle delay in tests: finalize right away (barriers still apply).
+  manager.setFinalizeTiming({ settleMs: 0 });
   await manager.initialize(provider, "https://example.com/voice/webhook");
   return { manager, provider };
 }

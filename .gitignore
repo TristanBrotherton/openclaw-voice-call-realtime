@@ -1,3 +1,9 @@
 node_modules/
 *.log
 .DS_Store
+__pycache__/
+*.pyc
+
+# Local dev-system files (voice status reads them; not published)
+STATUS.md
+ISSUES.md

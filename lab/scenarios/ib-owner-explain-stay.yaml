@@ -1,0 +1,40 @@
+id: ib-owner-explain-stay
+class: owner
+description: The owner calls in and asks for the latest on one of their projects (explain mode through the real Voice PE bridge), stays on the line, and should hear the answer on the call.
+direction: inbound
+bridge: real
+call:
+  caller: owner
+steps:
+  - id: ask
+    say: "Hey, it's me. What's the latest on the dev system project?"
+    gate: { after_bot_done: { quiet_ms: 1200 } }
+    gate_timeout_ms: 8000
+    voice: echo
+  - id: hold
+    say: "Sure, I'll hang on."
+    gate: { after_bot_done: { quiet_ms: 1500 } }
+    gate_timeout_ms: 30000
+    voice: echo
+  - id: nothing-else
+    say: "No, nothing else. I'll wait for it."
+    gate: { after_bot_done: { quiet_ms: 1500 } }
+    gate_timeout_ms: 30000
+    voice: echo
+  - id: waiting
+    # The research takes a minute or more; stay on quietly while it runs
+    # (the bot must neither hang up nor keep asking whether we're there).
+    wait_silence: 150000
+    gate: { after_bot_done: { quiet_ms: 1500 } }
+    gate_timeout_ms: 30000
+  - id: thanks
+    say: "Great, thanks. That's all, bye."
+    gate: { after_bot_done: { quiet_ms: 2500 } }
+    gate_timeout_ms: 300000
+    voice: echo
+expect:
+  ended_by: any
+  tools_called: [ask_assistant]
+  heard_any: ["dev ?system|launcher|role|migration|repo"]
+  no_plugin_errors: true
+limits: { max_duration_ms: 720000, idle_end_ms: 10000 }

@@ -533,7 +533,9 @@
               "echo",
               "sage",
               "shimmer",
-              "verse"
+              "verse",
+              "marin",
+              "cedar"
             ]
           },
           "realtimeSystemPrompt": {
@@ -669,6 +671,51 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
+          },
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "realtime",
+              "live"
+            ],
+            "default": "realtime"
+          },
+          "live": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "voice": {
+                "type": "string"
+              },
+              "backendModel": {
+                "type": "string"
+              },
+              "reasoningEffort": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "serviceTier": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "default",
+                  "flex",
+                  "priority"
+                ]
+              },
+              "fallbackToRealtime": {
+                "type": "boolean"
+              }
+            }
           }
         },
         "additionalProperties": false
@@ -1486,6 +1533,38 @@
           }
         },
         "additionalProperties": false
+      },
+      "recording": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "voiceBridge": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "url": {
+            "type": "string"
+          },
+          "askPath": {
+            "type": "string"
+          },
+          "askPathFile": {
+            "type": "string"
+          },
+          "discussions": {
+            "type": "boolean"
+          }
+        }
       }
     },
     "additionalProperties": false
