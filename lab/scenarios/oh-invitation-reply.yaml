@@ -1,0 +1,33 @@
+id: oh-invitation-reply
+class: outbound-human
+description: A friend answers a social call and invites the person the assistant works for to dinner; the owner texts back after 25 s; the bot keeps talking meanwhile and relays the yes.
+direction: outbound
+call:
+  call_party: third-party
+  message: "Thank Jordan for the recipe she sent last week and say it was a hit."
+stubs:
+  owner_reply: { text: "Yes, we'd love to. 7pm works.", after_ms: 25000 }
+steps:
+  - id: hello
+    say: "Hello?"
+    gate: { at_ms: 1200 }
+    voice: shimmer
+  - id: invite
+    say: "Oh that's so sweet, I'm glad! Hey, would Sam like to come over for dinner on Saturday?"
+    gate: { after_bot_done: { quiet_ms: 1200 } }
+    gate_timeout_ms: 12000
+    voice: shimmer
+  - id: wait
+    wait_silence: 1000
+    gate: { after_bot_done: { quiet_ms: 2500 } }
+    gate_timeout_ms: 90000
+  - id: bye
+    say: "Okay, no rush. Talk soon, bye!"
+    gate: { after_bot_done: { quiet_ms: 2500 } }
+    gate_timeout_ms: 90000
+    voice: shimmer
+expect:
+  ended_by: any
+  heard_any: ["7|seven"]
+  no_plugin_errors: true
+limits: { max_duration_ms: 180000, idle_end_ms: 8000 }

@@ -419,12 +419,34 @@ export class VoiceCallWebhookServer {
         }
 
         console.log(`[voice-call] ask_owner pending on ${key}: ${this.loggableText(question)}`);
-        const answer = await waitForAnswer;
+        // Don't hold the line in silence for minutes: wait briefly, then let
+        // the conversation carry on and pass the reply on if it comes in.
+        const quick = await Promise.race([
+          waitForAnswer.then((a) => ({ a })),
+          new Promise<null>((r) => setTimeout(() => r(null), ASK_OWNER_FOREGROUND_MS).unref?.()),
+        ]);
+        if (quick === null) {
+          void waitForAnswer.then((late) => {
+            if (late !== null) {
+              console.log(`[voice-call] ask_owner answered late on ${key} (${late.length} chars)`);
+              void this.deliverLateAnswer(session, providerCallId, question, late);
+            }
+          });
+          return (
+            "Your message to them is sent and they haven't answered yet (internal). Say briefly that " +
+            "you've sent them a quick message and will pass on the answer if it comes in while you " +
+            "talk, otherwise they'll get back to them — then carry on the conversation. Do not accept " +
+            "or decline anything on their behalf, and don't wait in silence."
+          );
+        }
+        const answer = quick.a;
         if (answer === null) {
           return (
-            "The owner has not replied yet. Proceed conservatively: accept a reasonable " +
-            "option tentatively and say the owner will confirm, or offer to call back. " +
-            "Save what happened via report_call_outcome."
+            "The owner has not replied yet. Do not accept or decline anything on their behalf. " +
+            "For a booking detail (a slightly different time or table) you may hold it " +
+            "tentatively and say it will be confirmed; for an invitation, a favour or any " +
+            "personal decision, say warmly that you'll check with them and they'll get back " +
+            "to them. Save what happened via report_call_outcome."
           );
         }
         console.log(`[voice-call] ask_owner answered on ${key} (${answer.length} chars)`);
@@ -1869,6 +1891,7 @@ export class VoiceCallWebhookServer {
             "- A bad line (you can't make out what they said): say so briefly and ask them to repeat; don't guess.\n" +
             "- They interrupt you: stop, listen, and answer what they said; don't restart your previous sentence.\n" +
             "- When they say goodbye, say a brief goodbye back and end the call; don't start re-confirming details then.\n" +
+            "- Invitations, favours or anything that needs the person you work for to decide (\"would they like to have dinner?\"): never accept or decline yourself. Check with them (ask_owner) if you can; otherwise say you'll check and they'll get back to them.\n" +
             "- Ask only for what the task says. Never invent preferences, requests or details (seating, dietary needs, names, numbers) that you were not given; if they ask about something you don't know, say you'll check.";
           // Merge base system prompt + device policy + call context + screening + tool guidance into updated instructions
           const promptParts = [
@@ -2690,6 +2713,9 @@ export function toolsForParty(tools: RealtimeToolDefinition[], party: string): R
       return { ...t, parameters: { ...t.parameters, properties: rest } };
     });
 }
+
+/** ask_owner waits this long for a reply before the conversation carries on. */
+const ASK_OWNER_FOREGROUND_MS = 15_000;
 
 /** ask_assistant waits this long in the foreground before continuing in the background. */
 const ASK_ASSISTANT_FOREGROUND_MS = 8_000;
