@@ -641,3 +641,21 @@ describe("max-duration end reason", () => {
     }
   });
 });
+
+describe("call files on request", () => {
+  it("finds the last call's recording and transcript only when asked", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "");
+    const { manager } = await createManagerHarness();
+    const { callId } = await manager.initiateCall("+15550000120");
+    markCallAnswered(manager, callId, "evt-files-ans");
+    const wavPath = path.join(manager.getStorePath(), "recordings", `${callId}.wav`);
+    fs.mkdirSync(path.dirname(wavPath), { recursive: true });
+    fs.writeFileSync(wavPath, stereoWav(tone(1), tone(1)));
+    await manager.endCall(callId);
+    await waitFor(() => fs.existsSync(transcriptFilePath(manager.getStorePath(), callId)));
+    const files = await manager.getCallFiles("last");
+    expect(files).toMatchObject({ callId, recordingPath: wavPath });
+    expect(files?.transcriptPath).toContain(callId);
+    expect(await manager.getCallFiles(callId)).toMatchObject({ recordingPath: wavPath });
+  });
+});

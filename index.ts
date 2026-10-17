@@ -181,6 +181,10 @@ const VoiceCallToolSchema = Type.Union([
     callId: Type.String({ description: "Call ID (works for ended calls too)" }),
   }),
   Type.Object({
+    action: Type.Literal("get_call_files"),
+    callId: Type.String({ description: "Call ID, or \"last\" for the most recent call" }),
+  }),
+  Type.Object({
     action: Type.Literal("answer_call_question"),
     callId: Type.String({
       description: "Call ID the question came from (the 📞 message includes its short prefix)",
@@ -527,6 +531,24 @@ const voiceCallPlugin = {
     );
 
     api.registerGatewayMethod(
+      "voicecall-tristan.files",
+      async ({ params, respond }: GatewayRequestHandlerOptions) => {
+        try {
+          const callId = typeof params?.callId === "string" ? params.callId.trim() : "";
+          if (!callId) {
+            respond(false, { error: "callId required" });
+            return;
+          }
+          const rt = await ensureRuntime();
+          const files = await rt.manager.getCallFiles(callId);
+          respond(true, files ? { found: true, ...files } : { found: false });
+        } catch (err) {
+          sendError(respond, err);
+        }
+      },
+    );
+
+    api.registerGatewayMethod(
       "voicecall-tristan.answer-question",
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
@@ -593,6 +615,9 @@ const voiceCallPlugin = {
           : "Poll get_status until the call ends, then use get_transcript to fetch the " +
             "call summary and full transcript to report back. ") +
         "get_transcript works any time after a call ends. " +
+        "get_call_files returns a past call's audio file and transcript file paths (callId or " +
+        "\"last\"); use it ONLY when the owner explicitly asks you to send them a call's audio or " +
+        "transcript, then send the files as attachments. Never bring up call audio otherwise. " +
         "IMPORTANT: if the owner replies to a relayed live-call question (messages starting " +
         "with 📞, which include the call id prefix), immediately pass their reply to the call " +
         "with answer_call_question — do not answer it yourself.",
@@ -663,6 +688,13 @@ const voiceCallPlugin = {
                   throw new Error("callId required");
                 }
                 return json(await dispatch("voicecall-tristan.transcript", { callId }));
+              }
+              case "get_call_files": {
+                const callId = String(params.callId || "").trim();
+                if (!callId) {
+                  throw new Error("callId required");
+                }
+                return json(await dispatch("voicecall-tristan.files", { callId }));
               }
             }
           }

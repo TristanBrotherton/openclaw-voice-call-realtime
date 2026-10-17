@@ -828,6 +828,42 @@ export class CallManager {
   }
 
   /**
+   * The owner asked for a call's files after the call (never offered on a
+   * call or in reports): the recording WAV and transcript file paths.
+   * `callId` may be "last" for the most recent call that has a recording.
+   */
+  async getCallFiles(callIdOrLast: string): Promise<
+    | { callId: string; direction: string; counterparty: string; startedAt: number; recordingPath?: string; transcriptPath?: string }
+    | undefined
+  > {
+    let call: CallRecord | undefined;
+    if (callIdOrLast === "last") {
+      call = loadLatestCallRecords(this.storePath)
+        .filter((c) => fs.existsSync(recordingFilePath(this.storePath, c.callId)) || typeof c.metadata?.recordingPath === "string")
+        .sort((a, b) => b.startedAt - a.startedAt)[0];
+    } else {
+      call = await this.findCall(callIdOrLast);
+    }
+    if (!call) {
+      return undefined;
+    }
+    const recCandidates = [
+      typeof call.metadata?.recordingPath === "string" ? call.metadata.recordingPath : undefined,
+      recordingFilePath(this.storePath, call.callId),
+    ].filter((p): p is string => !!p);
+    const recordingPath = recCandidates.find((p) => fs.existsSync(p));
+    const transcriptPath = transcriptFilePath(this.storePath, call.callId);
+    return {
+      callId: call.callId,
+      direction: call.direction,
+      counterparty: call.direction === "inbound" ? call.from : call.to,
+      startedAt: call.startedAt,
+      ...(recordingPath ? { recordingPath } : {}),
+      ...(fs.existsSync(transcriptPath) ? { transcriptPath } : {}),
+    };
+  }
+
+  /**
    * Get the transcript artifacts for a call (works after the call has ended).
    */
   async getTranscript(callIdOrProviderCallId: string): Promise<
