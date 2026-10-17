@@ -72,6 +72,9 @@ type CallFlowState = {
   failed: boolean;
   wrapUpWarned?: boolean;
   onHoldSince?: number;
+  /** The other party signalled the business is done ("you're all set"); closeNudged once acted on. */
+  closingCueAt?: number;
+  closeNudged?: boolean;
   /** When the other party said goodbye (cleared by anything else they say). */
   userGoodbyeAt?: number;
   /** Voicemail: when the message was requested, and when the bot last finished a line. */
@@ -84,6 +87,16 @@ type CallFlowState = {
   /** When the bot last said goodbye (and nobody has spoken since). */
   goodbyeAt?: number;
 };
+
+/** The other party signals the business is done: "you're all set", "that's right", "anything else?". */
+export function isClosingCue(text: string): boolean {
+  return /\b(all set|you'?re set|that'?s (right|correct|it|all|everything)|you'?re welcome|anything else|no problem|sounds good|all done|see you then|we'?ll see you)\b/i.test(
+    text,
+  );
+}
+
+/** After a closing cue and the bot's reply, close once the line has been quiet this long. */
+const CLOSE_AFTER_CUE_MS = 4_000;
 
 /** "What's the latest on the dev system project", "how does our voice bridge work". */
 export function looksLikeProjectQuestion(text: string): boolean {
@@ -726,6 +739,11 @@ export class VoiceCallWebhookServer {
         const alreadySaidGoodbye =
           session.runtime === "live" && !!byeFlow?.goodbyeAt && Date.now() - byeFlow.goodbyeAt < 15_000;
         const finalMessage = alreadySaidGoodbye ? undefined : resolveFinalMessage(args.final_message);
+        if (alreadySaidGoodbye) {
+          // Anything GPT-Live starts after its goodbye ("just a moment" while it
+          // hands off the hang-up) would be the last thing they hear: drop it.
+          session.interrupt();
+        }
         if (byeFlow) {
           byeFlow.ending = true;
         }
@@ -1194,6 +1212,7 @@ export class VoiceCallWebhookServer {
         // own goodbye): the conversation is not over.
         const userFlow = this.flows.get(providerCallId);
         if (userFlow) {
+          userFlow.closingCueAt = isClosingCue(transcript) ? Date.now() : undefined;
           userFlow.userGoodbyeAt = isGoodbyeLine(transcript) || /^\W*(bye|goodbye)\b/i.test(transcript.trim()) ? Date.now() : undefined;
         }
         if (userFlow?.goodbyeAt && !isGoodbyeLine(transcript) && !/^(thanks?|thank you|you too|ok(ay)?|cheers)\b/i.test(transcript.trim())) {
@@ -2443,6 +2462,27 @@ export class VoiceCallWebhookServer {
       now - flow.lastBotLineAt >= VOICEMAIL_DONE_QUIET_MS
     ) {
       flow.goodbyeAt = flow.lastBotLineAt - GOODBYE_HANGUP_MS; // reuse the hang-up path below
+    }
+    // The other party signalled the business is done, the bot has answered,
+    // and nobody is saying anything: close the call instead of waiting for a
+    // silence check-in ("are you still there?" after "you're all set").
+    if (
+      flow.closingCueAt &&
+      !flow.closeNudged &&
+      !flow.goodbyeAt &&
+      flow.lastBotLineAt &&
+      flow.lastBotLineAt > flow.closingCueAt &&
+      !session.isResponseActive() &&
+      !flow.detector.isActive() &&
+      now - Math.max(flow.lastBotLineAt, flow.detector.lastSpeech()) >= CLOSE_AFTER_CUE_MS &&
+      ![...this.bridgeTasks.values()].some((t) => t.providerCallId === flow.providerCallId)
+    ) {
+      flow.closeNudged = true;
+      console.log(`[voice-call] Closing ${flow.providerCallId}: business done, line quiet`);
+      session.instruct(
+        "The conversation is complete. Thank them briefly and say goodbye now, in one short sentence.",
+      );
+      return;
     }
     // The other party said goodbye, the bot has answered, and the line is
     // quiet: the conversation is over even if the model didn't end it.

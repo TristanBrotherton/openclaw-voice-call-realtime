@@ -4,6 +4,17 @@
 
 ### Changes
 
+- Recording transcripts are cut into utterances by the plugin's own speech
+  detector and each one transcribed (gpt-4o-transcribe): lines keep their exact
+  times and order (Whisper's own segments misordered turns and dropped the
+  opening of a live call, which skewed its summary).
+- Calls close properly: a warm goodbye when the other side says goodbye, no
+  "just a moment" at the end, and a short close once the other side signals
+  the business is done ("you're all set") and the line goes quiet.
+- Invitations and personal decisions are never accepted or declined for the
+  owner; ask_owner keeps the conversation going after 15 s and relays a late
+  reply.
+
 - Call recordings are debugging-only: prompts, tool descriptions and results,
   post-call reports and transcript files no longer mention them (a test keeps
   it that way). The voice model never sees them, and reports don't offer them.

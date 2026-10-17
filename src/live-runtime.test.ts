@@ -468,3 +468,13 @@ describe("SilenceWatch check-in is answered only by the caller", () => {
     expect(w.tick(16_000)).toBe("end");
   });
 });
+
+describe("isClosingCue", () => {
+  it("spots the other side wrapping up", async () => {
+    const { isClosingCue } = await import("./webhook.js");
+    expect(isClosingCue("Perfect, party of two. You're all set.")).toBe(true);
+    expect(isClosingCue("Yep, that's right.")).toBe(true);
+    expect(isClosingCue("Anything else I can help with?")).toBe(true);
+    expect(isClosingCue("What name should I put it under?")).toBe(false);
+  });
+});

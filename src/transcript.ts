@@ -293,10 +293,6 @@ function rms(samples: Int16Array, from = 0, to = samples.length): number {
   return Math.sqrt(sum / (b - a));
 }
 
-/** Below this RMS a channel window is treated as silence (Whisper invents text for silence). */
-const SILENCE_RMS = 60;
-/** Whisper's upload limit is 25 MB; 10 min of 8 kHz PCM16 mono is ~9.6 MB. */
-const CHUNK_SECONDS = 600;
 
 /** Interleave both channels' segments into time-ordered lines. */
 export function mergeRecordingSegments(
@@ -314,7 +310,7 @@ export function mergeRecordingSegments(
   const merged: RecordingLine[] = [];
   for (const line of lines) {
     const last = merged[merged.length - 1];
-    if (last && last.speaker === line.speaker) {
+    if (last && last.speaker === line.speaker && line.start - last.end < 1.5) {
       last.text = `${last.text} ${line.text}`;
       last.end = Math.max(last.end, line.end);
     } else {
@@ -335,6 +331,57 @@ export function formatRecordingLines(lines: RecordingLine[]): string {
     .join("\n");
 }
 
+/** A stretch of speech on one channel, in samples. */
+export type SpeechRegion = { from: number; to: number };
+
+/**
+ * Speech regions of one channel (20 ms frames, adaptive energy threshold),
+ * joined across short pauses and padded so words aren't clipped. Each region
+ * becomes one transcript line with an exact start time: Whisper's own
+ * segments span turns and drop text, which made the transcript misorder and
+ * lose whole lines.
+ */
+export function speechRegions(samples: Int16Array, sampleRate: number): SpeechRegion[] {
+  const frame = Math.round(sampleRate * 0.02);
+  const levels: number[] = [];
+  for (let i = 0; i + frame <= samples.length; i += frame) {
+    levels.push(rms(samples, i, i + frame));
+  }
+  const sorted = [...levels].sort((a, b) => a - b);
+  const floor = sorted[Math.floor(sorted.length * 0.2)] ?? 0;
+  // Cap the adaptive part: a channel that is all speech has no quiet floor to measure.
+  const threshold = Math.max(REGION_MIN_RMS, Math.min(floor * 4, 800));
+  const regions: SpeechRegion[] = [];
+  const gapFrames = Math.round(REGION_JOIN_GAP_S / 0.02);
+  let start = -1;
+  let lastLoud = -1;
+  for (let f = 0; f < levels.length; f++) {
+    if (levels[f]! > threshold) {
+      if (start < 0) {
+        start = f;
+      }
+      lastLoud = f;
+    } else if (start >= 0 && f - lastLoud > gapFrames) {
+      regions.push({ from: start * frame, to: (lastLoud + 1) * frame });
+      start = -1;
+    }
+  }
+  if (start >= 0) {
+    regions.push({ from: start * frame, to: (lastLoud + 1) * frame });
+  }
+  const pad = Math.round(sampleRate * REGION_PAD_S);
+  return regions
+    .filter((r) => r.to - r.from >= sampleRate * REGION_MIN_S)
+    .map((r) => ({ from: Math.max(0, r.from - pad), to: Math.min(samples.length, r.to + pad) }));
+}
+
+const REGION_MIN_RMS = 250;
+const REGION_JOIN_GAP_S = 0.9;
+const REGION_PAD_S = 0.2;
+const REGION_MIN_S = 0.25;
+/** Longest stretch sent in one request (Whisper-family limit is 25 MB; this is far below). */
+const REGION_MAX_S = 120;
+
 async function transcribeChannel(params: {
   samples: Int16Array;
   sampleRate: number;
@@ -344,72 +391,60 @@ async function transcribeChannel(params: {
   timeoutMs: number;
 }): Promise<RecordingSegment[]> {
   const { samples, sampleRate } = params;
-  const chunkLen = CHUNK_SECONDS * sampleRate;
-  const segments: RecordingSegment[] = [];
-  for (let from = 0; from < samples.length; from += chunkLen) {
-    const chunk = samples.subarray(from, Math.min(samples.length, from + chunkLen));
-    if (rms(chunk) < SILENCE_RMS / 4) {
-      continue; // an all-silent stretch: nothing to transcribe
+  const regions: SpeechRegion[] = [];
+  for (const r of speechRegions(samples, sampleRate)) {
+    for (let from = r.from; from < r.to; from += REGION_MAX_S * sampleRate) {
+      regions.push({ from, to: Math.min(r.to, from + REGION_MAX_S * sampleRate) });
     }
-    const form = new FormData();
-    form.append(
-      "file",
-      new Blob([new Uint8Array(encodeMonoWav(chunk, sampleRate))], { type: "audio/wav" }),
-      "channel.wav",
-    );
-    form.append("model", params.model);
-    form.append("response_format", "verbose_json");
-    form.append("timestamp_granularities[]", "segment");
-    form.append("temperature", "0");
-    if (params.language) {
-      form.append("language", params.language);
-    }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), params.timeoutMs);
-    timer.unref?.();
-    let data: {
-      segments?: Array<{ start?: number; end?: number; text?: string; no_speech_prob?: number }>;
-      text?: string;
-    };
-    try {
+  }
+  const results: Array<RecordingSegment | null> = new Array(regions.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= regions.length) {
+        return;
+      }
+      const r = regions[i]!;
+      const chunk = samples.subarray(r.from, r.to);
+      const form = new FormData();
+      form.append(
+        "file",
+        new Blob([new Uint8Array(encodeMonoWav(chunk, sampleRate))], { type: "audio/wav" }),
+        "utterance.wav",
+      );
+      form.append("model", params.model);
+      form.append("response_format", "json");
+      form.append("temperature", "0");
+      if (params.language) {
+        form.append("language", params.language);
+      }
       const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
         method: "POST",
         headers: { Authorization: `Bearer ${params.apiKey}` },
         body: form,
-        signal: controller.signal,
+        signal: AbortSignal.timeout(params.timeoutMs),
       });
       if (!response.ok) {
         const body = await response.text().catch(() => "");
         throw new Error(`transcription HTTP ${response.status} ${body.slice(0, 200)}`);
       }
-      data = (await response.json()) as typeof data;
-    } finally {
-      clearTimeout(timer);
+      const data = (await response.json()) as { text?: string };
+      const text = data.text?.trim();
+      if (text) {
+        results[i] = { start: r.from / sampleRate, end: r.to / sampleRate, text };
+      }
     }
-    const offsetSec = from / sampleRate;
-    for (const seg of data.segments ?? []) {
-      const text = seg.text?.trim();
-      if (!text || typeof seg.start !== "number") {
-        continue;
-      }
-      const end = typeof seg.end === "number" ? seg.end : seg.start;
-      if ((seg.no_speech_prob ?? 0) > 0.6) {
-        continue;
-      }
-      // Drop text for windows that are silent on this channel (hallucinations).
-      if (rms(chunk, seg.start * sampleRate, end * sampleRate) < SILENCE_RMS) {
-        continue;
-      }
-      segments.push({ start: seg.start + offsetSec, end: end + offsetSec, text });
-    }
-  }
-  return segments;
+  };
+  await Promise.all(Array.from({ length: Math.min(4, regions.length) }, worker));
+  return results.filter((r): r is RecordingSegment => r !== null);
 }
 
 /**
  * Transcribe a stereo call recording (left = other party, right = bot as
- * heard) with OpenAI Whisper (verbose_json segment timestamps, needed to
- * interleave the two channels) and merge into time-ordered lines.
+ * heard): each channel is cut into utterances by its own speech detector,
+ * each utterance is transcribed (gpt-4o-transcribe), and the lines are merged
+ * in time order.
  */
 export async function transcribeRecording(
   wavPath: string,
@@ -420,7 +455,7 @@ export async function transcribeRecording(
   const common = {
     sampleRate,
     apiKey,
-    model: options.model ?? "whisper-1",
+    model: options.model ?? "gpt-4o-transcribe",
     language: options.language,
     timeoutMs: options.timeoutMs ?? 60_000,
   };

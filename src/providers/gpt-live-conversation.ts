@@ -628,9 +628,14 @@ export const LIVE_VOICE_DELEGATION =
   "Whenever the instructions above say to use a tool, delegate that task to the backend instead " +
   "(describe what is needed in plain words). Always delegate: pressing phone keys for a menu; " +
   "saving the outcome of the call; ending the call; lookups and questions for the person you " +
-  "work for; transfers; home and calendar checks. Ending the call: say your goodbye yourself, " +
-  "then immediately delegate 'save the outcome and end the call' — never leave the line open " +
-  "after a goodbye. While delegated work runs, keep the conversation natural and short; never " +
+  "work for; transfers; home and calendar checks. Ending the call: when the conversation is " +
+  "over — or the other person says goodbye or wishes you a good day — answer with a warm " +
+  "goodbye of your own (\"You too — goodbye!\"), then delegate 'save the outcome and end the " +
+  "call' WITHOUT saying anything more: no \"just a moment\", no \"one second\" at the end of a " +
+  "call. When your goal is done and confirmed, close in the same breath (\"Thanks so much " +
+  "for your help — goodbye!\") instead of waiting for them to end it. Never leave the line " +
+  "open after a goodbye. While delegated work runs, keep the " +
+  "conversation natural and short; never " +
   "say an action is done or state a result before the backend's result arrives.";
 
 /**

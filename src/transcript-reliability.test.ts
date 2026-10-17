@@ -19,6 +19,7 @@ import {
   mergeRecordingSegments,
   splitWavChannels,
   transcribeRecording,
+  speechRegions,
   transcriptFilePath,
 } from "./transcript.js";
 import type { CallRecord } from "./types.js";
@@ -489,46 +490,53 @@ describe("recording transcript", () => {
     ]);
   });
 
-  it("transcribes each channel with Whisper segments and drops silent-window text", async () => {
+  it("transcribes each detected utterance and orders them by when they were spoken", async () => {
     const dir = createTestStorePath();
     fs.mkdirSync(dir, { recursive: true });
     const wavPath = path.join(dir, "rec.wav");
-    // Caller speaks 0-2 s, bot speaks 2-4 s; each is silent otherwise.
-    const left = new Int16Array(4 * 8000);
-    left.set(tone(2), 0);
-    const right = new Int16Array(4 * 8000);
-    right.set(tone(2), 2 * 8000);
+    // Caller speaks 0-1 s and 4-5 s; the bot speaks 1.5-3.5 s. Silent otherwise.
+    const left = new Int16Array(6 * 8000);
+    left.set(tone(1), 0);
+    left.set(tone(1), 4 * 8000);
+    const right = new Int16Array(6 * 8000);
+    right.set(tone(2), 1.5 * 8000);
     fs.writeFileSync(wavPath, stereoWav(left, right));
 
-    let call = 0;
+    const durations: number[] = [];
     const fetchMock = stubOpenAiFetch((url, init) => {
       expect(url).toContain("/audio/transcriptions");
       const form = init?.body as FormData;
-      expect(form.get("response_format")).toBe("verbose_json");
-      call++;
-      // Same canned answer for both channels: text placed in a window that is
-      // silent on that channel must be dropped.
-      return new Response(
-        JSON.stringify({
-          segments: [
-            { start: 0.1, end: 1.9, text: " Caller words", no_speech_prob: 0.01 },
-            { start: 2.1, end: 3.9, text: " Bot words", no_speech_prob: 0.01 },
-          ],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
+      expect(form.get("model")).toBe("gpt-4o-transcribe");
+      const file = form.get("file") as Blob;
+      durations.push(file.size);
+      // Label each utterance by its length: 1 s clips are the caller's, 2 s the bot's.
+      const seconds = (file.size - 44) / 16000;
+      return new Response(JSON.stringify({ text: seconds > 1.8 ? "Bot words" : `Caller words ${durations.length}` }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     });
     const result = await transcribeRecording(wavPath, "test-key");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(call).toBe(2);
-    expect(result.text).toBe("[00:00] Caller: Caller words\n[00:02] Assistant: Bot words");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.lines.map((l) => `${l.speaker}@${Math.floor(l.start)}`)).toEqual(["user@0", "bot@1", "user@3"]);
+    expect(result.text.split("\n")[1]).toBe("[00:01] Assistant: Bot words");
+  });
+
+  it("finds speech regions and ignores silence", () => {
+    const x = new Int16Array(5 * 8000);
+    x.set(tone(1), 1 * 8000);
+    x.set(tone(1), 3 * 8000);
+    const regions = speechRegions(x, 8000);
+    expect(regions).toHaveLength(2);
+    expect(regions[0]!.from / 8000).toBeCloseTo(0.8, 1);
+    expect(speechRegions(new Int16Array(8000), 8000)).toEqual([]);
   });
 
   it("finalize waits for barriers and writes both transcript sections", async () => {
     stubOpenAiFetch((url) =>
       url.includes("/audio/transcriptions")
         ? new Response(
-            JSON.stringify({ segments: [{ start: 0.2, end: 1.5, text: "Heard words" }] }),
+            JSON.stringify({ text: "Heard words" }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           )
         : undefined,

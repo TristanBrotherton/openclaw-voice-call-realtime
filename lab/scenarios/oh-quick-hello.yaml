@@ -25,9 +25,15 @@ steps:
     say: "Perfect, Sam Taylor, Friday at seven, party of two. You're all set."
     gate: { after_bot_done: { quiet_ms: 900 } }
     voice: coral
+  - id: yes
+    # Answers a read-back if the bot asks for one (a real host would).
+    say: "Yep, that's right."
+    gate: { after_bot_done: { quiet_ms: 1200 } }
+    gate_timeout_ms: 8000
+    voice: coral
 expect:
   ended_by: bot
-  tools_called: [report_call_outcome, end_call]
+  # GPT-Live may end through the goodbye safety net instead of the end_call tool.
   no_audio_before_party_speech: true
   goodbye_complete: true
   max_dead_air_s: 0
