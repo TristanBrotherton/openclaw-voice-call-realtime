@@ -62,6 +62,9 @@ export function collectBusyIntervals(
       continue;
     }
     const event = item as ical.VEvent;
+    if (event.status === "CANCELLED") {
+      continue;
+    }
     if (event.transparency === "TRANSPARENT") {
       continue; // marked "free" on the calendar
     }
