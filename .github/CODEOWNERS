@@ -1,0 +1,22 @@
+# Changes to these paths need the maintainer's review (required by the main
+# ruleset). They can change what CI runs or what gets installed, so the
+# sensitive-paths check alone isn't enough: a fork PR can edit the workflow.
+/.github/                 @TristanBrotherton
+package.json              @TristanBrotherton
+package-lock.json         @TristanBrotherton
+npm-shrinkwrap.json       @TristanBrotherton
+yarn.lock                 @TristanBrotherton
+pnpm-lock.yaml            @TristanBrotherton
+.npmrc                    @TristanBrotherton
+.yarnrc*                  @TristanBrotherton
+openclaw.plugin.json      @TristanBrotherton
+tsconfig*.json            @TristanBrotherton
+vitest.config.*           @TristanBrotherton
+requirements*.txt         @TristanBrotherton
+pyproject.toml            @TristanBrotherton
+Dockerfile*               @TristanBrotherton
+docker-compose*           @TristanBrotherton
+Makefile                  @TristanBrotherton
+*.sh                      @TristanBrotherton
+/scripts/                 @TristanBrotherton
+.gitleaksignore           @TristanBrotherton
