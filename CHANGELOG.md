@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Calendar: cancelled events no longer count as busy, decided per occurrence
+  for recurring events, so one cancelled meeting frees only its own slot and a
+  moved occurrence is busy at its new time (thanks @abaichuan1017, #11).
+  Occurrences that started before the window are counted, a rule that can't
+  be expanded no longer breaks every lookup, `webcal://` links (iCloud) work,
+  and the feed fetch times out after 15 s.
+- The call prompt's "today" is the gateway's local date (it was the UTC date,
+  a day ahead in the US evening).
+
 ## 2026.10.17
 
 ### Changes

@@ -24,7 +24,7 @@ import {
   type RealtimeToolResult,
 } from "./providers/openai-realtime-conversation.js";
 import { generateDtmfMulaw, isValidDtmfSequence } from "./dtmf.js";
-import { pickCalendarCommand, resolveAvailability } from "./calendar.js";
+import { localDateLabel, pickCalendarCommand, resolveAvailability } from "./calendar.js";
 import {
   controlHomeEntity,
   queryHomeStates,
@@ -1832,7 +1832,7 @@ export class VoiceCallWebhookServer {
               (haControlAvailable
                 ? "Never route home control through ask_assistant — check_home/control_home do it instantly. "
                 : "") +
-              `Today's date is ${new Date().toISOString().slice(0, 10)}.\n`
+              `Today is ${localDateLabel()}.\n`
             : "";
           const askOwnerGuidance =
             this.config.askOwner?.enabled && this.ownerMessenger
@@ -1856,7 +1856,7 @@ export class VoiceCallWebhookServer {
             (this.config.calendar.icsUrl || this.config.calendar.command);
           const calendarGuidance = calendarEnabled
             ? "- For ANY question about the owner's calendar or schedule (what's next, when is X, is a time free), use check_calendar — it answers in about a second. Never use ask_assistant for calendar lookups. " +
-              `Today's date is ${new Date().toISOString().slice(0, 10)}. ` +
+              `Today is ${localDateLabel()}. ` +
               "Never invent calendar details.\n"
             : "";
           const ownerToolsGuidance =

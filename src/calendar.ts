@@ -26,15 +26,32 @@ export type CalendarAvailabilityConfig = {
 type IcsCache = { fetchedAt: number; events: ical.CalendarResponse };
 
 const caches = new Map<string, IcsCache>();
+const FETCH_TIMEOUT_MS = 15_000;
 
 async function fetchCalendar(config: CalendarAvailabilityConfig): Promise<ical.CalendarResponse> {
   const cached = caches.get(config.icsUrl);
   if (cached && Date.now() - cached.fetchedAt < config.cacheTtlMs) {
     return cached.events;
   }
-  const events = await ical.async.fromURL(config.icsUrl);
+  // iCloud shares calendars as webcal:// links, which are plain HTTPS.
+  const url = config.icsUrl.replace(/^webcals?:\/\//i, "https://");
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  if (!res.ok) {
+    throw new Error(`calendar feed HTTP ${res.status}`);
+  }
+  const events = await ical.async.parseICS(await res.text());
   caches.set(config.icsUrl, { fetchedAt: Date.now(), events });
   return events;
+}
+
+/**
+ * Today's date in the gateway's local time zone, the one availability is
+ * computed in (a UTC date is tomorrow's in the US evening).
+ */
+export function localDateLabel(d: Date = new Date()): string {
+  const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${weekday}, ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /** Exposed for tests. */
@@ -46,9 +63,23 @@ function overlaps(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
   return aStart < bEnd && aEnd > bStart;
 }
 
+/** ICS enumerated values are case-insensitive and may carry parameters. */
+function icsValue(value: unknown): string {
+  const raw = (value as { val?: unknown } | undefined)?.val ?? value;
+  return typeof raw === "string" ? raw.trim().toUpperCase() : "";
+}
+
+function isFree(event: ical.VEvent): boolean {
+  return icsValue(event.status) === "CANCELLED" || icsValue(event.transparency) === "TRANSPARENT";
+}
+
+const DAY_MS = 86_400_000;
+
 /**
  * Collect busy intervals from parsed ICS data within [from, to],
- * expanding recurring events.
+ * expanding recurring events. Cancelled and transparent ("free") events
+ * don't count; for a recurring event this is decided per occurrence, so a
+ * cancelled or moved single occurrence is honoured.
  */
 export function collectBusyIntervals(
   data: ical.CalendarResponse,
@@ -56,44 +87,57 @@ export function collectBusyIntervals(
   to: Date,
 ): BusyInterval[] {
   const busy: BusyInterval[] = [];
+  const add = (start: Date | undefined, end: Date | undefined) => {
+    if (start && end && overlaps(start, end, from, to)) {
+      busy.push({ start, end });
+    }
+  };
 
   for (const item of Object.values(data)) {
     if (!item || (item as { type?: string }).type !== "VEVENT") {
       continue;
     }
     const event = item as ical.VEvent;
-    if (event.transparency === "TRANSPARENT") {
-      continue; // marked "free" on the calendar
-    }
-    const durationMs =
-      event.end && event.start ? event.end.getTime() - event.start.getTime() : 0;
+    const overrides = Object.values(event.recurrences ?? {}) as ical.VEvent[];
 
-    if (event.rrule) {
-      // Expand recurrences; rrule works in UTC-naive dates, so pad the window
-      // by a day on each side and filter precisely afterwards.
-      const padded = event.rrule.between(
-        new Date(from.getTime() - 86_400_000),
-        new Date(to.getTime() + 86_400_000),
-        true,
-      );
-      const exdates = new Set(
-        Object.values(event.exdate ?? {}).map((d) => (d as Date).toDateString?.() ?? String(d)),
-      );
-      for (const occurrence of padded) {
-        if (exdates.has(occurrence.toDateString())) {
-          continue;
-        }
-        const start = occurrence;
-        const end = new Date(start.getTime() + durationMs);
-        if (overlaps(start, end, from, to)) {
-          busy.push({ start, end });
+    if (!event.rrule) {
+      // A single event, or occurrences of a series whose master isn't in the
+      // feed (node-ical keeps the first at the top and the rest in recurrences).
+      for (const one of [event, ...overrides]) {
+        if (!isFree(one)) {
+          add(one.start, one.end);
         }
       }
       continue;
     }
 
-    if (event.start && event.end && overlaps(event.start, event.end, from, to)) {
-      busy.push({ start: event.start, end: event.end });
+    // node-ical can copy STATUS/TRANSP from a single-occurrence override onto
+    // a master that doesn't set them, so a master-level "free" is only trusted
+    // when no override says the same; otherwise the series stays busy.
+    const masterFree =
+      isFree(event) &&
+      !overrides.some(
+        (o) =>
+          icsValue(o.status) === icsValue(event.status) &&
+          icsValue(o.transparency) === icsValue(event.transparency),
+      );
+
+    let instances: ical.EventInstance[];
+    try {
+      // Pad the window so overrides moved in from just outside it are seen.
+      instances = ical.expandRecurringEvent(event, {
+        from: new Date(from.getTime() - DAY_MS),
+        to: new Date(to.getTime() + DAY_MS),
+        expandOngoing: true,
+      });
+    } catch {
+      continue; // a malformed rule must not break the whole calendar
+    }
+    for (const instance of instances) {
+      const free = instance.isOverride ? isFree(instance.event) : masterFree;
+      if (!free) {
+        add(instance.start, instance.end);
+      }
     }
   }
 
