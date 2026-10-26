@@ -36,7 +36,7 @@ def _request(req: urllib.request.Request, timeout: float, retries: int = 2) -> d
     last: Exception = RuntimeError("no attempt")
     for attempt in range(retries + 1):
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 - fixed https://api.openai.com URLs
                 return json.loads(r.read().decode())
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")
