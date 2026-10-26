@@ -1,0 +1,2 @@
+# README curl example: Sec-WebSocket-Key is the RFC 6455 sample nonce, not a secret.
+fd1f49288380e02c8d3bef650c06604181c9fbd2:README.md:generic-api-key:209
