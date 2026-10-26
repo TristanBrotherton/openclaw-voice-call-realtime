@@ -1,0 +1,147 @@
+# Security checks for every pull request and for main.
+#
+# Runs on `pull_request` only (never `pull_request_target`), so fork PRs get a
+# read-only token and no secrets. No job installs or runs PR code: the scans
+# read the source, the lockfile and the PR file list.
+#
+# A deep human/agent review of outside PRs still happens outside CI; the
+# "sensitive-paths" job flags the PRs that need it.
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: never
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks (checksum-verified)
+        run: |
+          curl -fsSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+      - name: Scan history
+        run: ./gitleaks git --redact --no-banner --exit-code 1 .
+
+  codeql:
+    name: codeql (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, python, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          version: 1.31.1
+          advanced-security: false
+          persona: regular
+
+  npm-audit:
+    name: npm-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # Reads package-lock.json only; nothing is installed. Runtime
+      # dependencies only: the dev-only openclaw types package ships its own
+      # shrinkwrap with advisories we can't override (see CHANGELOG).
+      - run: npm audit --audit-level=high --omit=dev
+
+  bandit:
+    name: bandit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --disable-pip-version-check bandit==1.9.4
+      - run: bandit -r lab -ll -q
+
+  sensitive-paths:
+    name: sensitive-paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Flag fork PRs that touch sensitive paths
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$HEAD_REPO" = "$REPO" ]; then
+            echo "PR from this repository; nothing to flag."
+            exit 0
+          fi
+          gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' > files.txt
+          pattern='^\.github/|(^|/)package(-lock)?\.json$|(^|/)npm-shrinkwrap\.json$|(^|/)(yarn\.lock|pnpm-lock\.yaml|bun\.lockb?)$|(^|/)\.npmrc$|(^|/)\.yarnrc|(^|/)openclaw\.plugin\.json$|(^|/)(requirements[^/]*\.txt|pyproject\.toml|setup\.(py|cfg)|Pipfile(\.lock)?|poetry\.lock|uv\.lock)$|(^|/)(Dockerfile[^/]*|docker-compose[^/]*|Containerfile)$|(^|/)Makefile$|\.sh$|(^|/)scripts/|(^|/)tsconfig[^/]*\.json$|(^|/)vitest\.config\.'
+          if grep -E "$pattern" files.txt > hits.txt; then
+            echo "::error title=Needs maintainer security review::This fork PR changes workflows, dependency manifests or lockfiles, or build/install files. A maintainer must review it by hand; CI does not clear this check."
+            sed 's/^/  /' hits.txt
+            exit 1
+          fi
+          echo "No sensitive paths changed."
