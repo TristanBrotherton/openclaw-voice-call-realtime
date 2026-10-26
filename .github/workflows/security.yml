@@ -52,7 +52,7 @@ jobs:
           echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
       - name: Scan history
-        run: ./gitleaks git --redact --no-banner --exit-code 1 .
+        run: ./gitleaks git --redact --verbose --no-banner --exit-code 1 .
 
   codeql:
     name: codeql (${{ matrix.language }})
