@@ -10,7 +10,7 @@
  */
 
 import { execFile } from "node:child_process";
-import ical from "node-ical";
+import ical, { type CalendarResponse, type EventInstance, type VEvent } from "node-ical";
 
 export type BusyInterval = { start: Date; end: Date };
 
@@ -23,12 +23,12 @@ export type CalendarAvailabilityConfig = {
   cacheTtlMs: number;
 };
 
-type IcsCache = { fetchedAt: number; events: ical.CalendarResponse };
+type IcsCache = { fetchedAt: number; events: CalendarResponse };
 
 const caches = new Map<string, IcsCache>();
 const FETCH_TIMEOUT_MS = 15_000;
 
-async function fetchCalendar(config: CalendarAvailabilityConfig): Promise<ical.CalendarResponse> {
+async function fetchCalendar(config: CalendarAvailabilityConfig): Promise<CalendarResponse> {
   const cached = caches.get(config.icsUrl);
   if (cached && Date.now() - cached.fetchedAt < config.cacheTtlMs) {
     return cached.events;
@@ -69,7 +69,7 @@ function icsValue(value: unknown): string {
   return typeof raw === "string" ? raw.trim().toUpperCase() : "";
 }
 
-function isFree(event: ical.VEvent): boolean {
+function isFree(event: VEvent): boolean {
   return icsValue(event.status) === "CANCELLED" || icsValue(event.transparency) === "TRANSPARENT";
 }
 
@@ -82,7 +82,7 @@ const DAY_MS = 86_400_000;
  * cancelled or moved single occurrence is honoured.
  */
 export function collectBusyIntervals(
-  data: ical.CalendarResponse,
+  data: CalendarResponse,
   from: Date,
   to: Date,
 ): BusyInterval[] {
@@ -97,8 +97,8 @@ export function collectBusyIntervals(
     if (!item || (item as { type?: string }).type !== "VEVENT") {
       continue;
     }
-    const event = item as ical.VEvent;
-    const overrides = Object.values(event.recurrences ?? {}) as ical.VEvent[];
+    const event = item as VEvent;
+    const overrides = Object.values(event.recurrences ?? {}) as VEvent[];
 
     if (!event.rrule) {
       // A single event, or occurrences of a series whose master isn't in the
@@ -122,7 +122,7 @@ export function collectBusyIntervals(
           icsValue(o.transparency) === icsValue(event.transparency),
       );
 
-    let instances: ical.EventInstance[];
+    let instances: EventInstance[];
     try {
       // Pad the window so overrides moved in from just outside it are seen.
       instances = ical.expandRecurringEvent(event, {
