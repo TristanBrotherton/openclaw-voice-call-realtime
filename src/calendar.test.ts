@@ -1,11 +1,11 @@
-import ical from "node-ical";
+import ical, { type CalendarResponse } from "node-ical";
 import { describe, expect, it } from "vitest";
 import { collectBusyIntervals, localDateLabel } from "./calendar.js";
 
 const from = new Date("2026-07-13T00:00:00Z");
 const to = new Date("2026-07-20T00:00:00Z");
 
-function parse(...events: string[][]): ical.CalendarResponse {
+function parse(...events: string[][]): CalendarResponse {
   return ical.sync.parseICS(
     [
       "BEGIN:VCALENDAR",
@@ -17,7 +17,7 @@ function parse(...events: string[][]): ical.CalendarResponse {
   );
 }
 
-const busyStarts = (data: ical.CalendarResponse) =>
+const busyStarts = (data: CalendarResponse) =>
   collectBusyIntervals(data, from, to).map((b) => b.start.toISOString());
 
 const single = (...extra: string[]) => [
