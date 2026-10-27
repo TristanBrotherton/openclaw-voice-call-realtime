@@ -1,0 +1,45 @@
+# Third-party gate (Tristan 2026-10-27: "I'm okay with my agents merging just not with third parties without me").
+#
+# A required check on main. A PR from a branch in this repo (our agents' own PRs, Dependabot) passes at once. A PR
+# from a fork stays red until TristanBrotherton approves its CURRENT head commit; new commits need a new approval.
+#
+# `pull_request_target` runs main's copy of this file, so a fork can't edit it. It never checks out or runs PR code:
+# it only reads the PR's metadata and reviews and sets a commit status on the head SHA.
+# After Tristan approves, re-run it: gh run rerun <run id> -R <repo> (or push nothing and wait for the next event).
+#
+# Source of truth: dev-system conventions/public-repo-ci/third-party-gate.yml (copy it unchanged).
+name: third-party-gate
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] no checkout, no PR code; reads metadata and sets a status
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: third-party-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Own branch passes; a fork PR needs Tristan's approval of its head commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          status() { gh api "repos/$REPO/statuses/$HEAD_SHA" -f state="$1" -f context=third-party-gate -f description="$2" >/dev/null; echo "$1: $2"; }
+          if [ "$HEAD_REPO" = "$REPO" ]; then status success "Branch in this repo"; exit 0; fi
+          n=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+            --jq "[.[] | select(.user.login == \"TristanBrotherton\" and .state == \"APPROVED\" and .commit_id == \"$HEAD_SHA\")] | length" \
+            | awk '{s += $1} END {print s + 0}')
+          if [ "$n" -gt 0 ]; then status success "Approved by TristanBrotherton"; else status failure "Fork PR: needs TristanBrotherton's approval of this commit"; fi
