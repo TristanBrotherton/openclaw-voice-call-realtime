@@ -7,7 +7,7 @@
     "@sinclair/typebox": "0.34.48",
     "node-ical": "^0.26.1",
     "ws": "^8.19.0",
-    "zod": "^4.3.6"
+    "zod": "^4.6.7"
   },
   "openclaw": {
     "extensions": [
@@ -18,7 +18,7 @@
     "@types/node": "^22.20.0",
     "@types/ws": "^8.18.1",
     "commander": "^15.0.0",
-    "openclaw": "^2026.6.11",
+    "openclaw": "2026.10.5",
     "tsx": "^4.23.15",
     "typescript": "5.9",
     "vitest": "^4.1.12",
@@ -48,6 +48,7 @@
     "protobufjs": "^7.6.6",
     "qs": "^6.16.1",
     "source-map-js": "^1.2.2",
-    "body-parser": "^2.3.0"
+    "body-parser": "^2.3.0",
+    "zod": "$zod"
   }
 }
