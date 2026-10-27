@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 // NOTE: import from `agent-harness-runtime`, not `agent-harness`. The gateway
 // (2026.9.6) only exports callGatewayTool from the runtime subpath; the older
 // openclaw devDependency in this fork still exports it from both, which is why
@@ -20,6 +20,7 @@ import {
   createPostCallReporter,
 } from "./src/assistant-bridge.js";
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./src/runtime.js";
+import type { TelephonyTtsRuntime } from "./src/telephony-tts.js";
 
 function asParamRecord(params: unknown): Record<string, unknown> {
   return params && typeof params === "object" && !Array.isArray(params)
@@ -302,7 +303,9 @@ const voiceCallPlugin = {
         slot.runtimePromise = createVoiceCallRuntime({
           config,
           coreConfig: api.config as CoreConfig,
-          ttsRuntime: api.runtime.tts,
+          // The host's TTS takes its full config type; we pass back the same
+          // api.config object, narrowed here to CoreConfig.
+          ttsRuntime: api.runtime.tts as unknown as TelephonyTtsRuntime,
           logger: api.logger,
           assistantBridge,
           postCallReporter,
