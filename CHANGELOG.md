@@ -19,6 +19,9 @@
   no patched npm release yet.
 - The call prompt's "today" is the gateway's local date (it was the UTC date,
   a day ahead in the US evening).
+- node-ical 0.27.3 (its types are now imported by name).
+- CI: pull requests from forks need the maintainer's approval of their
+  latest commit before they can merge.
 
 ## 2026.10.17
 
