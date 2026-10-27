@@ -14,7 +14,9 @@
   plugin API type now comes from `openclaw/plugin-sdk/core`; local
   declarations cover the runtime modules that ship without `.d.ts`). The
   vulnerable packages its old shrinkwrap pinned (hono and others) are gone;
-  the remaining dev-only advisories sit in the npm copy openclaw bundles.
+  the npm CLI it depends on is pinned to 12.2.1 (newer bundled packages).
+  Two dev-only advisories remain inside that npm (undici, ip-address) with
+  no patched npm release yet.
 - The call prompt's "today" is the gateway's local date (it was the UTC date,
   a day ahead in the US evening).
 
