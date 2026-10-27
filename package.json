@@ -20,7 +20,7 @@
     "commander": "^15.0.0",
     "openclaw": "2026.10.5",
     "tsx": "^4.23.15",
-    "typescript": "5.9",
+    "typescript": "7.0",
     "vitest": "^4.1.12",
     "yaml": "^2.9.1"
   },
