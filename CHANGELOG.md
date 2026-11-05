@@ -10,13 +10,12 @@
   Occurrences that started before the window are counted, a rule that can't
   be expanded no longer breaks every lookup, `webcal://` links (iCloud) work,
   and the feed fetch times out after 15 s.
-- Dev dependency `openclaw` moved to 2026.10.5 (plugin-sdk types: the
+- Dev dependency `openclaw` moved to 2026.10.8 (plugin-sdk types: the
   plugin API type now comes from `openclaw/plugin-sdk/core`; local
   declarations cover the runtime modules that ship without `.d.ts`). The
   vulnerable packages its old shrinkwrap pinned (hono and others) are gone;
-  the npm CLI it depends on is pinned to 12.2.1 (newer bundled packages).
-  Two dev-only advisories remain inside that npm (undici, ip-address) with
-  no patched npm release yet.
+  the npm CLI it depends on is pinned to 12.2.2 (patched bundled packages,
+  including undici and ip-address), and @hono/node-server to 2.x.
 - The call prompt's "today" is the gateway's local date (it was the UTC date,
   a day ahead in the US evening).
 - node-ical 0.27.3 (its types are now imported by name).
